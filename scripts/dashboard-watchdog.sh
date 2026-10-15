@@ -6,14 +6,25 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PIDFILE="$HERMES_HOME/state/dashboard-watchdog.pid"
 mkdir -p "$HERMES_HOME/state" "$HERMES_HOME/logs"
 
-if [ -f "$PIDFILE" ]; then
-  other=$(cat "$PIDFILE" 2>/dev/null)
-  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
-    exit 0   # já tem um watchdog rodando
+# starttime do /proc (campo 22 = 20º token depois do ')'): identidade do
+# processo, imune a reuso de PID. Sem isto, um pidfile antigo com o número
+# reaproveitado fazia a guarda achar "já tem um watchdog" — e o dashboard ficava
+# sem vigia em silêncio.
+starttime() { awk '{n=split($0,a,")"); split(a[n],f," "); print f[20]}' "/proc/$1/stat" 2>/dev/null; }
+
+other=""; other_st=""
+[ -r "$PIDFILE" ] && read -r other other_st <"$PIDFILE"
+if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+  atual=$(starttime "$other")
+  if [ -z "$other_st" ] || [ -z "$atual" ] || [ "$atual" = "$other_st" ]; then
+    exit 0   # já tem um watchdog rodando (o MESMO processo, não só o mesmo pid)
   fi
 fi
-echo $$ >"$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT
+echo "$$ $(starttime $$)" >"$PIDFILE"
+# o wake-lock era tomado aqui e NINGUÉM devolvia: depois que o watchdog morre,
+# o aparelho nunca mais dormia. O trap cobre saída limpa e SIGTERM (SIGKILL não
+# roda trap em lugar nenhum do sistema — por isso a guarda também valida pid)
+trap 'rm -f "$PIDFILE"; termux-wake-unlock >/dev/null 2>&1' EXIT
 
 termux-wake-lock >/dev/null 2>&1
 UP="$HERMES_HOME/scripts/dashboard-up.sh"

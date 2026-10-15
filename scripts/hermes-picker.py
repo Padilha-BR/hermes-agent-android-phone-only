@@ -15,6 +15,7 @@ import hashlib
 import html
 import json
 import os
+import secrets
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -126,6 +127,7 @@ select{{width:100%;margin-bottom:10px}}
 <div class="foot">
   <textarea id="pergunta" placeholder="Pergunta (opcional)"></textarea>
   <button class="send" id="enviar">Mandar ({n})</button>
+  <input type="hidden" id="gen" value="{gen}">
 </div>
 <script>
 let sel=new Set();
@@ -147,8 +149,12 @@ btn.addEventListener('click',async()=>{{
   btn.disabled=true;btn.textContent='mandando...';
   try{{
     const r=await fetch('/choose',{{method:'POST',headers:{{'content-type':'application/json'}},
-      body:JSON.stringify({{ids:[...sel],question:document.getElementById('pergunta').value}})}});
+      body:JSON.stringify({{ids:[...sel],gen:document.getElementById('gen').value,question:document.getElementById('pergunta').value}})}});
     const j=await r.json();
+    if(!r.ok||j.stale){{
+      document.body.innerHTML='<div class="vazio"><h1>A lista mudou</h1><p>As fotos foram reescaneadas depois que esta tela abriu — nada foi enviado.</p><p><a href="/">recarregar a lista</a></p></div>';
+      return;
+    }}
     document.body.innerHTML='<div class="vazio"><h1>Pronto!</h1><p>'+j.count+' foto(s) enviada(s) pro Hermes.</p><p>Volte para o Termux — o Hermes já está abrindo com a imagem.</p></div>';
   }}catch(e){{btn.disabled=false;btn.textContent='deu erro, tente de novo';}}
 }});
@@ -185,13 +191,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(b"", "image/jpeg", 404)
             data = thumb_for(p)
             if data is None:
-                return self._send(b"", "image/jpeg", 404)
+                # a docstring promete "cai para a imagem original": é aqui.
+                # Só acontece sem Pillow ou com arquivo que o PIL não abre.
+                try:
+                    data = p.read_bytes()
+                except OSError:
+                    return self._send(b"", "image/jpeg", 404)
+                tipo = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif",
+                        "webp": "webp", "bmp": "bmp"}.get(p.suffix.lstrip(".").lower(), "jpeg")
+                return self._send(data, f"image/{tipo}")
             return self._send(data, "image/jpeg")
         if u.path == "/":
             fonte = (parse_qs(u.query).get("fonte", ["todas"])[0]) or "todas"
             # a lista vive no SERVIDOR: cada requisição cria um handler novo, então
             # guardar em self.photos faria /thumb/* responder 404 logo em seguida.
             self.server.photos = scan(fonte)
+            # geração da lista: o POST /choose compara com a da página aberta.
+            # A lista é reescaneada a cada GET / (outra aba, foto nova) e os ids
+            # do cliente são ÍNDICES — sem esta checagem, o que você marcou podia
+            # virar OUTRA foto na hora de mandar pro Hermes.
+            self.server.gen = secrets.token_hex(8)
             cells = []
             for i, p in enumerate(self.server.photos):
                 cells.append(
@@ -203,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                 f'<option value="{html.escape(k)}"{" selected" if k == fonte else ""}>{html.escape(k)}</option>'
                 for k in SOURCES
             )
-            corpo = PAGE.format(opcoes=opcoes, celulas="".join(cells) or '<div class="vazio">nenhuma foto encontrada nessa pasta</div>', n=len(self.photos))
+            corpo = PAGE.format(opcoes=opcoes, celulas="".join(cells) or '<div class="vazio">nenhuma foto encontrada nessa pasta</div>', n=len(self.photos), gen=self.server.gen)
             return self._send(corpo.encode(), "text/html; charset=utf-8")
         return self._send(b"nao encontrado", "text/plain", 404)
 
@@ -215,6 +234,13 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
             return self._send(b'{"ok":false}', "application/json", 400)
+        if str(payload.get("gen", "")) != str(getattr(self.server, "gen", "")):
+            # página aberta antes do último scan: recusar em vez de mandar a
+            # foto errada (os ids são índices numa lista que mudou)
+            return self._send(json.dumps(
+                {"ok": False, "stale": True,
+                 "erro": "a lista de fotos mudou — recarregue a pagina"}
+            ).encode(), "application/json", 409)
         paths = []
         for i in payload.get("ids", []):
             try:
