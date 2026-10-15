@@ -148,6 +148,7 @@ Then read the docs in order. Nothing in `scripts/` contains credentials; paths a
 | 05 | [Android optimization](docs/05-otimizacao-android.md) | Memory budget, skill index cost, plugin traps, the `pkill` self-kill. |
 | 06 | [Phone-only operation](docs/06-operacao-so-com-o-celular.md) | On-screen keyboard without Ctrl, free dictation, widgets, sending photos to the agent. |
 | 07 | [Is a native Android port next?](docs/07-porta-para-app-android.md) | What upstream already solves (Android wheels, retag pipeline, platform gates), why the UI is separable, the real blockers (Play Store, foreground service, scoped storage) and the three paths with their price. |
+| 08 | [How the agent opens a page](docs/08-browser-no-android.md) | The three routes by cost (plain HTTP wins most of the time), why no Chromium runs inside a container here, who owns the browser on port 9222, and how the Playwright *API* does work — through Node, with the two flags it needs. |
 
 Docs are in Portuguese (they are our working notes); this README and doc 00's tables are in English.
 
