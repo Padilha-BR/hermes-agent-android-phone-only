@@ -22,7 +22,9 @@
   let autoScroll = true, anexos = [], tituloSessao = ''
 
   // ── utilidades ─────────────────────────────────────────────────────────────
-  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // aspas também: a saída vira innerHTML e um " crua dentro de href="…" quebra
+  // o atributo e deixa injetar event handler
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const perto = () => main.scrollHeight - main.scrollTop - main.clientHeight < 90
 
   function bannerMostrar(msg) { banner.textContent = msg; banner.classList.add('mostra') }
@@ -44,7 +46,10 @@
       h = h.replace(/`([^`]+)`/g, '<code>$1</code>')
       h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       h = h.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      h = h.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$1" target="_blank" rel="noopener">$2</a>')
+      // href = $2 (a URL, que precisa ser http/https e não pode ter aspa);
+      // texto = $1. Estava INVERTIDO: href recebia o label — link navegava pra
+      // um caminho relativo aleatório e o label podia ser javascript:...
+      h = h.replace(/\[([^\]]+)\]\((https?:[^)\s"'<>]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       h = h.replace(/^### (.*)$/gm, '<h3>$1</h3>')
       h = h.replace(/^## (.*)$/gm, '<h2>$1</h2>')
       h = h.replace(/^# (.*)$/gm, '<h1>$1</h1>')
