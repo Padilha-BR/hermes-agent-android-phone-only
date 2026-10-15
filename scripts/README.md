@@ -8,6 +8,13 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 > `$PREFIX/bin` é protegido para escrita pelo agente no Termux: escreva o script em
 > `~/.hermes/bin` e crie o link com `ln -s`, senão a escrita é recusada.
 
+> ⚠️ **Os `.py` que falam com o Hermes rodam com o python do venv**, não com o `python3` do
+> sistema: `~/hermes-agent/venv/bin/python`. Eles importam `websockets` e outras dependências que só
+> existem no venv — com o `python3` do Termux o erro é
+> `ModuleNotFoundError: No module named 'websockets'`, que parece script quebrado e é só
+> interpretador errado. Vale para `verify-native-chat.py`, `testar-chat-*.py`, `hermes-desktop-web.py`
+> e `validar-injecao.py`. Já os `.sh` são do Termux e rodam com `bash`.
+
 > ⚠️ **Nunca ponha o injetor em `0.0.0.0`.** O `hermes-desktop-web.py` fixa
 > `ThreadingHTTPServer(("127.0.0.1", PORT), …)` e injeta o token da sessão no HTML que serve —
 > em loopback isso é conveniente e seguro, porque só o próprio aparelho alcança. Fora do loopback

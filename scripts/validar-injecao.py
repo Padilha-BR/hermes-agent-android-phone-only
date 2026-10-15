@@ -38,10 +38,12 @@ if not m:
 template = m.group(1)
 falhas: list[str] = []
 
-# 1) `%` solto: verbo de formatacao invalido
-soltos = re.findall(r'%(?![%sd(])', template)
-if soltos:
-    print(f"AVISO: {len(soltos)} `%` literal no template — troque por `%%`")
+# 1) `%`: so e problema se a formatacao REAL falhar (etapa 3). O heurístico antigo rodava em
+#    cima do `%%` ja escapado e acusava o SEGUNDO `%` de cada par — falso positivo que mandava
+#    o usuario cacar bug que nao existe.
+sem_escape = template.replace("%%", "")
+suspeitos = [(mm.start(), sem_escape[max(0, mm.start() - 50):mm.start() + 20])
+             for mm in re.finditer(r"%(?![%sd(])", sem_escape)]
 
 # 2) `{{` que viraria chave dobrada no JS
 if "{{" in template:
@@ -51,9 +53,16 @@ if "{{" in template:
 try:
     injecao = template % {"backend": '"http://127.0.0.1:9119"', "token": '"token-de-teste"'}
     print(f"formatacao OK ({len(injecao)} chars)")
+    if suspeitos:
+        print(f"NOTA: {len(suspeitos)} `%` fora do padrao, mas a formatacao passou — sao verbos "
+              "validos do Python (`%r`, `%5.1f`...). Nada a corrigir.")
 except Exception as e:
     print(f"FALHA na formatacao: {type(e).__name__}: {e}")
-    print("  -> procure `%` literal no template (todo `%` precisa virar `%%`)")
+    if suspeitos:
+        print("  -> `%` que o Python recusou, com contexto:")
+        for pos, ctx in suspeitos[:5]:
+            print(f"     @{pos}: ...{ctx.replace(chr(10), ' ')}...")
+    print("  -> todo `%` que deve chegar literal no JS precisa ser `%%`")
     raise SystemExit(1)
 
 # 4) o bloco <script> inline precisa ser JS valido
