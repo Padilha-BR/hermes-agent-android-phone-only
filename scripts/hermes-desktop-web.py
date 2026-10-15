@@ -758,6 +758,12 @@ class Handler(BaseHTTPRequestHandler):
                  "desktop": PORTE_DESKTOP, "cmd": CMD_LIGADO}
         inj = PONTE % {"backend": js_literal(BACKEND), "token": js_literal(fetch_token()),
                        "flags": js_literal(flags)}
+        if not PORTE_DESKTOP:
+            # a ponte window.hermesDesktop é do app do desktop; no chat ela só
+            # pesava (e o embrulho de WebSocket do shim recarregava a página
+            # junto com a renovação de token que o próprio chat já faz)
+            inj = inj.replace('<script src="/__stubs.js"></script>\n', "").replace(
+                '<script src="/__shim.js"></script>\n', "")
         # CSP com nonce: páginas que pedem (o chat traz <meta> com __HERMES_NONCE__)
         # recebem nonce novo por resposta, e o <script> inline da injeção leva o
         # mesmo nonce. Sem o placeholder, nada muda (o bundle do desktop).
