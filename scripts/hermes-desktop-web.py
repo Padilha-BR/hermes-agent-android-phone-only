@@ -28,17 +28,25 @@ SHIM = Path(os.environ.get("HERMES_DESKTOP_SHIM", str(HERMES_HOME / "bin" / "shi
 PORT = int(os.environ.get("HERMES_DESKTOP_WEB_PORT", "8890"))
 BACKEND = os.environ.get("HERMES_BACKEND", "http://127.0.0.1:9119")
 LOG = Path(os.environ.get("HERMES_WEB_LOG", str(HERMES_HOME / "logs" / "desktop-web.log")))
+# Telemetria/instrumentação de debug: DESLIGADA por padrão (ligue com
+# HERMES_WEB_TELEMETRIA=1 ao subir o injetor). Ligada, a página manda pulso/probe/
+# console a cada 10s e o log cresce ~4 MB/dia — foi reclamação do usuário (15/10/2026).
+TELEMETRIA = os.environ.get("HERMES_WEB_TELEMETRIA", "").lower() in ("1", "true", "yes", "on")
+DEBUG = TELEMETRIA or os.environ.get("HERMES_WEB_DEBUG", "").lower() in ("1", "true", "yes", "on")
 # /__cmd executa JS arbitrário nas páginas abertas. Sem exigir token, qualquer
-# app do aparelho alcança 127.0.0.1 (no Android o loopback NÃO exige permissão
-# de rede) e dirige a UI que carrega o token da sessão. Token = env
-# HERMES_DESKTOP_CMD_TOKEN (estável, para scripts) ou um aleatório por processo
-# (impresso no log de startup). HERMES_DESKTOP_CMD_INSECURE=1 volta ao
-# comportamento antigo, para quem só opera localmente.
+# página web aberta no Chrome alcança a porta fixa por GET (CSRF, sem CORS) e
+# dirige a UI que carrega o token da sessão — no Android o loopback também é
+# alcançável por qualquer app com permissão de rede. Ordem do token: env
+# HERMES_DESKTOP_CMD_TOKEN (estável, para scripts) → arquivo 0600 em
+# state/desktop-cmd-token → aleatório por processo (impresso no log de startup).
+# HERMES_DESKTOP_CMD_INSECURE=1 volta ao comportamento antigo.
 def _ler_token_arquivo() -> str:
     try:
         return (HERMES_HOME / "state" / "desktop-cmd-token").read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
 CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or _ler_token_arquivo()
 CMD_TOKEN_ORIGEM = "env" if os.environ.get("HERMES_DESKTOP_CMD_TOKEN") else ("arquivo 0600" if CMD_TOKEN else "aleatorio")
 if not CMD_TOKEN:
@@ -75,8 +83,20 @@ MIME = {
 }
 
 
+LIMITE_LOG = 1_000_000  # 1 MB: rotação própria, pra log nenhum virar bola de neve
+GUARDA_LOG = 200_000    # guarda os últimos 200 KB quando rotaciona
+
+
 def log(msg: str) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if LOG.stat().st_size > LIMITE_LOG:
+            with LOG.open("rb") as fh:
+                fh.seek(max(0, LOG.stat().st_size - GUARDA_LOG))
+                resto = fh.read()
+            LOG.write_bytes(resto)
+    except OSError:
+        pass
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(f"{time.strftime('%F %T')} {msg}\n")
 
@@ -105,9 +125,12 @@ def redact(text: str) -> str:
 PONTE = """<script>
 window.__HERMES_BACKEND__ = %(backend)s;
 window.__HERMES_SESSION_TOKEN__ = %(token)s;
-// captura de erro + telemetria de DOM: eu leio este log porque não vejo a tela do celular
+// Telemetria de debug (pulso/probe/console): só quando o servidor manda
+// (HERMES_WEB_TELEMETRIA=1). Desligada, a página não manda nada e não varre o DOM.
+const __TELEMETRIA__ = %(telemetria)s;
 (function () {
-  const env = (level, msg) => { try { navigator.sendBeacon('/__err', JSON.stringify({level, msg: String(msg).slice(0, 4000)})); } catch (e) {} };
+  const relatar = (level, msg) => { try { navigator.sendBeacon('/__err', JSON.stringify({level, msg: String(msg).slice(0, 4000)})); } catch (e) {} };
+  const env = __TELEMETRIA__ ? relatar : () => {};
   // DIAGNÓSTICO: o app chama .trim() em algo que não é string e morre.
   // TEM de ser NÃO-ENUMERÁVEL: enumerável, o `for…in` do framer-motion itera a
   // chave herdada e quebra o app com erros de interop (this.events[e].clear etc.).
@@ -121,6 +144,7 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
     })
   } catch (e) {}
   window.__probe = () => {
+    if (!__TELEMETRIA__) return;
     try {
       const t = (document.body && document.body.innerText) || '';
       // textContent inclui o que está colapsado (o "Details" da tela de erro do app)
@@ -136,7 +160,7 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
           const e = todos[i];
           const r = e.getBoundingClientRect();
           const cs = getComputedStyle(e);
-          pedacos.push((e.tagName || '?').toLowerCase() + '.' + String(e.className).split(/\s+/).slice(0, 2).join('.') +
+          pedacos.push((e.tagName || '?').toLowerCase() + '.' + String(e.className).split(/\\s+/).slice(0, 2).join('.') +
             '[x=' + Math.round(r.x) + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) +
             ' pos=' + cs.position + ' tr=' + cs.transform.slice(0, 26) + ']');
         }
@@ -170,7 +194,7 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
           const cs = getComputedStyle(el);
           const r = el.getBoundingClientRect();
           cadeia.push((el.tagName || '?').toLowerCase() +
-            (el.className && typeof el.className === 'string' ? '.' + el.className.split(/\s+/).slice(0, 2).join('.') : '') +
+            (el.className && typeof el.className === 'string' ? '.' + el.className.split(/\\s+/).slice(0, 2).join('.') : '') +
             '[h=' + Math.round(r.height) + ',y=' + Math.round(r.y) +
             ',ov=' + cs.overflowY + ',pos=' + cs.position + ',hcss=' + cs.height +
             ',inline=' + ((el.getAttribute('style') || '').slice(0, 40) || '-') + ']');
@@ -199,16 +223,19 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
         ' | rolagem=' + Math.round(window.scrollY) + '/' + Math.round(document.documentElement.scrollHeight - window.innerHeight));
       env('dom', 'title=' + document.title + ' | hash=' + location.hash +
         ' | nos=' + document.querySelectorAll('*').length +
-        ' | texto=' + t.replace(/\s+/g, ' ').slice(0, 400) +
-        ' | completo=' + tudo.replace(/\s+/g, ' ').slice(0, 900));
+        ' | texto=' + t.replace(/\\s+/g, ' ').slice(0, 400) +
+        ' | completo=' + tudo.replace(/\\s+/g, ' ').slice(0, 900));
     } catch (e) { env('dom', 'probe falhou ' + e); }
   };
+  if (__TELEMETRIA__) {
   window.addEventListener('error', e => env('error', (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || 0)));
   window.addEventListener('unhandledrejection', e => env('reject', (e.reason && (e.reason.stack || e.reason.message)) || e.reason));
   const ce = console.error.bind(console);
   console.error = (...a) => { env('console', a.map(x => (x && x.stack) || String(x)).join(' ')); ce(...a); };
   const cw = console.warn.bind(console);
   console.warn = (...a) => { env('warn', a.map(String).join(' ').slice(0, 800)); cw(...a); };
+  }
+  if (__TELEMETRIA__) {
   setTimeout(window.__probe, 300);
   setTimeout(window.__probe, 6000);
   setTimeout(window.__probe, 15000);
@@ -228,6 +255,7 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
   }, 10000);
   // aba em segundo plano congela timers: manda telemetria também quando ela volta pra frente
   document.addEventListener('visibilitychange', () => { if (!document.hidden) window.__probe(); });
+  }
   // manifest: deixa esta UI instalável como app próprio (ícone na tela inicial)
   try {
     const l = document.createElement('link');
@@ -298,10 +326,10 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
         let r;
         try { r = eval(m.js); } catch (err) { r = 'ERRO: ' + ((err && err.stack) || err); }
         if (r && typeof r.then === 'function') {
-          r.then((v) => env('eval', String(v).slice(0, 1500)))
-           .catch((err) => env('eval', 'ERRO async: ' + ((err && err.stack) || err)));
+          r.then((v) => relatar('eval', String(v).slice(0, 1500)))
+           .catch((err) => relatar('eval', 'ERRO async: ' + ((err && err.stack) || err)));
         } else {
-          env('eval', String(r).slice(0, 1500));
+          relatar('eval', String(r).slice(0, 1500));
         }
       }
     };
@@ -316,7 +344,7 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
       window.matchMedia = function (q) {
         const mq = _mm(q);
         try {
-          if (/max-width:\s*639\.98px/.test(String(q))) {
+          if (/max-width:\\s*639\\.98px/.test(String(q))) {
             Object.defineProperty(mq, 'matches', { get: () => false, configurable: true });
           }
         } catch (e) {}
@@ -354,6 +382,11 @@ window.__HERMES_SESSION_TOKEN__ = %(token)s;
 class Handler(BaseHTTPRequestHandler):
     server_version = "HermesDesktopWeb/1.0"
 
+    def log_message(self, fmt, *args):  # noqa: N802
+        # log de acesso só em modo debug: sem isso crescia ~1 MB/dia à toa
+        if DEBUG:
+            super().log_message(fmt, *args)
+
     def _send(self, body: bytes, ctype: str, code: int = 200) -> None:
         self.send_response(code)
         self.send_header("content-type", ctype)
@@ -377,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
         level = str(data.get("level", "?"))
         msg = redact(str(data.get("msg", "")))[:2000]
         # ruído conhecido: não polui o log
-        if not any(k in msg for k in ("favicon", "ResizeObserver loop")):
+        if (DEBUG or level in ("eval", "cmd")) and not any(k in msg for k in ("favicon", "ResizeObserver loop")):
             log(f"[{level}] {msg}")
         return self._send(b'{"ok":true}', "application/json")
 
@@ -387,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
         global VERSION
         path = urlparse(self.path).path
         # visibilidade: sem isso eu não sei se a página está viva e pedindo coisas
-        if path in ("/", "/__events", "/__stubs.js", "/__shim.js", "/__health"):
+        if DEBUG and path in ("/", "/__events", "/__stubs.js", "/__shim.js", "/__health"):
             log(f"[req] {path}{'?…' if '?' in self.path else ''}")
         if path == "/__health":
             return self._send(b"ok", "text/plain")
@@ -448,8 +481,8 @@ class Handler(BaseHTTPRequestHandler):
 
             q = parse_qs(urlparse(self.path).query)
             if not CMD_INSEGURO and (q.get("token") or [""])[0] != CMD_TOKEN:
-                log("[cmd] recusado: token ausente/errado (veja o token de startup "
-                    "no log, ou defina HERMES_DESKTOP_CMD_TOKEN)")
+                log("[cmd] recusado: token ausente/errado (token em state/desktop-cmd-token "
+                    "ou na env HERMES_DESKTOP_CMD_TOKEN)")
                 return self._send(b'{"ok":false,"erro":"token ausente ou invalido"}',
                                   "application/json", 403)
             js = (q.get("js") or [""])[0]
@@ -519,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
         data = target.read_bytes()
         if target.suffix == ".html":
             html = data.decode("utf-8", "replace")
-            inj = PONTE % {"backend": json.dumps(BACKEND), "token": json.dumps(fetch_token())}
+            inj = PONTE % {"backend": json.dumps(BACKEND), "token": json.dumps(fetch_token()),
+                       "telemetria": "true" if TELEMETRIA else "false"}
             # UI de desktop numa tela de celular: a viewport CSS tem ~400px e o layout
             # do desktop precisa de 1000+. Renderiza numa viewport larga e deixa o
             # Chrome reduzir — assim o layout fica inteiro (e dá pra dar zoom).
