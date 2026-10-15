@@ -148,6 +148,7 @@ Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux
 | 04 | [Chat nativo por WebSocket](docs/04-chat-nativo-websocket.md) | O protocolo JSON-RPC do gateway: métodos, eventos e como verificar antes de prometer que funciona. |
 | 05 | [Otimização Android](docs/05-otimizacao-android.md) | Orçamento de memória, custo do índice de skills, armadilhas de plugin, o `pkill` que se automata. |
 | 06 | [Operação só com o celular](docs/06-operacao-so-com-o-celular.md) | Teclado de tela sem Ctrl, ditado grátis, widgets, mandar foto pro agente. |
+| 07 | [E isso abre porta para um app Android nativo?](docs/07-porta-para-app-android.md) | O que o upstream já resolve (wheels Android, pipeline de retag, gates de plataforma), por que a UI é separável, os bloqueios reais (Play Store, foreground service, armazenamento com escopo) e os três caminhos com preço. |
 
 ## Segurança e privacidade
 

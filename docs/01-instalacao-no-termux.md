@@ -52,6 +52,39 @@ export PATH=$PREFIX/bin:$PREFIX/bin/applets:$PATH
 export TMPDIR=$PREFIX/tmp
 ```
 
+## As duas rotas — e o que o ADB faz de verdade
+
+Esta instalação usou **ADB a partir de um computador, com cabo USB** — mas só como *porta de
+entrada*. Os rastros no aparelho mostram exatamente isso: o `~/boot.sh` abre dizendo
+"fase 1: deixa o Termux acessível por SSH (via adb forward)" e declara que roda como
+`adb shell run-as com.termux <bash> boot.sh`; e a `~/.ssh/authorized_keys` tem a chave que o
+computador usou para entrar.
+
+**O que o ADB fez (fase 1, só a porta):**
+
+- instalou o build **debug** do Termux — o `run-as` só funciona nele (no F-Droid dá
+  `package not debuggable`);
+- empurrou e rodou o `boot.sh` **como o UID do Termux**, que é o que liga o `sshd` na 8022;
+- `adb forward tcp:8022 tcp:8022` + chave = shell determinístico, em vez de digitar na tela do
+  aparelho;
+- desligou o assassino de processos fantasma do Android
+  (`settings put global settings_enable_monitor_phantom_procs false`).
+
+**O que foi 100% no aparelho:** do `setup_hermes_termux.sh` em diante, tudo — venv, compilação das
+dependências, build do renderer, gerador da ponte, watchdog, patch do PWA e otimização. O ADB não
+tocou em nada disso. **ADB é a porta; quem trabalha é o telefone.**
+
+**Dá para fazer tudo por ADB?** A instalação, sim — APK, `run-as`, port forward, `input text`,
+`am start`, `screencap` e até a whitelist de bateria
+(`dumpsys deviceidle whitelist +com.termux`) funcionam com a tela bloqueada. Duas ressalvas:
+
+1. **ADB precisa de computador, cabo e depuração USB.** Sem isso, a rota é a do doc 06: Termux pelo
+   navegador, `termux-setup-storage`, e servir o APK por HTTP local para o Chrome instalar.
+2. **ADB só funciona no build debug** — e trocar a fonte do APK exige `adb uninstall com.termux`
+   antes, o que **apaga os dados do Termux**. Decida antes, não no meio do caminho.
+
+Nenhum resultado deste repositório *dependeu* de ADB: ele abriu a porta e saiu de cena.
+
 ## Ordem de instalação (cada passo existe porque a ordem ingênua quebra)
 
 1. **`apt update && apt full-upgrade -y -o Dpkg::Options::=--force-confold` antes de qualquer coisa.**
