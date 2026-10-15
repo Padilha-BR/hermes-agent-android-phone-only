@@ -16,8 +16,11 @@ cd "$HOME" || exit 1
 # tamanho da viewport: o Chrome encolhe a UI pra caber, então MENOR = texto MAIOR.
 # Valor fica em state/desktop-web-viewport (mude com `hermes-desktop-zoom`).
 VIEWPORT="${HERMES_WEB_VIEWPORT_WIDTH:-$(cat "$H/state/desktop-web-viewport" 2>/dev/null || echo 900)}"
+# HERMES_WEB_DESKTOP_FIXES=1: os remendos do porte (trim, matchMedia, reset de
+# layout) são deste app; explícito para valer mesmo fora da porta 8890.
 HERMES_DESKTOP_WEB="$BUNDLE" HERMES_WEB_VIEWPORT_WIDTH="$VIEWPORT" \
   HERMES_WEB_EXTRA_CSS="$H/desktop-fonts.css,$H/desktop-port.css" \
+  HERMES_WEB_DESKTOP_FIXES=1 \
   setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
 for _ in $(seq 1 15); do
   sleep 1

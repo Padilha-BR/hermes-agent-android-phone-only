@@ -224,14 +224,20 @@ você a serve. Estes cinco pontos foram medidos, não deduzidos:
   segundo plano tem o JS **congelado**: o servidor entrega, a página não executa.
   Se a telemetria parou, é a aba, não o código — peça UM toque de recarga ao
   usuário em vez de repetir tentativas.
-- **Canal de operação `/__cmd?js=<urlencoded>&token=<CMD_TOKEN>`** (SSE → `eval` → resultado no log)
-  permite clicar e ler a página daqui. O token sai da env `HERMES_DESKTOP_CMD_TOKEN`, do arquivo
-  `~/.hermes/state/desktop-cmd-token` (chmod 600) ou é aleatório por processo e aparece no log de
-  startup; **sem token a resposta é 403** — sem isso qualquer página aberta no navegador
-  dispara o canal por GET (CSRF), porque o loopback não tem CORS. Armadilha: **não esvazie a fila ao
+- **Canal de operação `POST /__cmd` `{"js": …}`** (SSE → `eval` → resultado no log)
+  permite clicar e ler a página daqui. Vem **desligado**: liga com `HERMES_DESKTOP_CMD=1` (gera o
+  segredo em `~/.hermes/state/desktop-cmd-token`, chmod 600) ou sozinho quando esse arquivo / a
+  env `HERMES_DESKTOP_CMD_TOKEN` já existe. O token vai no header `X-Hermes-Cmd-Token` (ou no
+  corpo; o GET antigo `?js=…&token=…` segue aceito); **sem token a resposta é 403**, e `Host`,
+  `Origin` ou `Sec-Fetch-Site` de outro site também dão 403 — sem isso qualquer página aberta no
+  navegador dispara o canal por GET (CSRF) ou lê o token por DNS rebinding, porque o loopback não
+  é fronteira de confiança. O resultado do `eval` volta pelo `/__err` mesmo com a telemetria
+  desligada; os probes/pulso é que são opt-in (`HERMES_WEB_TELEMETRY=1`, ou `=dom` para incluir
+  o texto da página). Armadilha: **não esvazie a fila ao
   entregar** — uma conexão SSE morta de uma carga antiga fica na lista, "come" o
   comando e a página viva nunca recebe. Entregue a fila inteira a cada conexão e
-  deixe a página descartar ids repetidos.
+  deixe a página descartar ids repetidos — **inclusive entre recargas** (a página guarda os ids
+  vistos no `sessionStorage`), senão um `reload` antigo recarrega de novo em laço.
 - **Recarga confiável tem duas portas**: `?v=<ts>` para carga fria e SSE
   (`/__bump`) para a aba viva; nenhuma funciona com o Termux em segundo plano
   (bloqueio de lançamento de atividade — ver a seção de intents no SKILL.md).

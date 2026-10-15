@@ -11,8 +11,11 @@ mkdir -p "$H/logs"
 [ -f "$APP/index.html" ] || { echo "app de chat ainda nao existe em $APP"; exit 1; }
 
 if ! curl -s -o /dev/null --max-time 3 "$URL/__health"; then
+  # chat: sem remendos do desktop e sem telemetria de DOM (seria texto da conversa
+  # no log), mesmo que a shell tenha HERMES_WEB_TELEMETRY exportado
   HERMES_DESKTOP_WEB="$APP" HERMES_DESKTOP_WEB_PORT="$PORT" \
   HERMES_WEB_LOG="$H/logs/chat-telemetria.log" \
+  HERMES_WEB_DESKTOP_FIXES=0 HERMES_WEB_TELEMETRY=0 \
     setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
   for _ in $(seq 1 15); do sleep 1; curl -s -o /dev/null --max-time 3 "$URL/__health" && break; done
 fi
