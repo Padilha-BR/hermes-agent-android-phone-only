@@ -11,13 +11,18 @@ mkdir -p "$HERMES_HOME/state" "$HERMES_HOME/logs"
 # reaproveitado fazia a guarda achar "já tem um watchdog" — e o dashboard ficava
 # sem vigia em silêncio.
 starttime() { awk '{n=split($0,a,")"); split(a[n],f," "); print f[20]}' "/proc/$1/stat" 2>/dev/null; }
+# pidfile em formato LEGADO (só o pid) não tem starttime para comparar: nesse
+# caso confirma pelo cmdline que o dono do pid é mesmo um watchdog.
+e_watchdog() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'dashboard-watchdog'; }
 
 other=""; other_st=""
 [ -r "$PIDFILE" ] && read -r other other_st <"$PIDFILE"
 if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
   atual=$(starttime "$other")
-  if [ -z "$other_st" ] || [ -z "$atual" ] || [ "$atual" = "$other_st" ]; then
-    exit 0   # já tem um watchdog rodando (o MESMO processo, não só o mesmo pid)
+  if [ -n "$other_st" ] && [ -n "$atual" ]; then
+    [ "$atual" = "$other_st" ] && exit 0   # o MESMO processo, não só o mesmo pid
+  elif e_watchdog "$other"; then
+    exit 0                                 # pidfile legado: o pid É um watchdog
   fi
 fi
 echo "$$ $(starttime $$)" >"$PIDFILE"

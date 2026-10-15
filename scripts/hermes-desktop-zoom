@@ -36,6 +36,14 @@ echo "viewport: ${ATUAL} → ${NOVO} (recarregando…)"
 # lemos /proc/<pid>/environ (mesmo uid no Termux) e só matamos o 8890/sem porta.
 mortos=0
 for pid in $(pgrep -f hermes-desktop-web.py 2>/dev/null); do
+  # pgrep -f casa QUALQUER processo que cite o nome no cmdline (uma shell de
+  # diagnóstico, por exemplo). O servidor de verdade é `python <script>`: exige
+  # o interpretador no argv0, como já faz o hermes-desktop-up.
+  argv0=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | head -1)
+  case "$argv0" in
+    *python*) ;;
+    *) echo "aviso: pid $pid nao e servidor (argv0=${argv0:-ilegivel}) — ignorado" >&2; continue ;;
+  esac
   envs=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
   if [ -z "$envs" ]; then
     echo "aviso: pid $pid sem environ legivel — nao matei (pode ser o chat)" >&2
