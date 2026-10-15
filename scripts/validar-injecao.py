@@ -50,8 +50,13 @@ if "{{" in template:
     print("AVISO: `{{` no template — em template `%`-formatado isso chega literal no JS")
 
 # 3) a formatacao em si (o teste que reproduz o erro do servidor)
+VALORES = {
+    "backend": '"http://127.0.0.1:9119"',
+    "token": '"token-de-teste"',
+    "flags": '{"telemetria": true, "dom": true, "desktop": true, "cmd": true}',
+}
 try:
-    injecao = template % {"backend": '"http://127.0.0.1:9119"', "token": '"token-de-teste"'}
+    injecao = template % VALORES
     print(f"formatacao OK ({len(injecao)} chars)")
     if suspeitos:
         print(f"NOTA: {len(suspeitos)} `%` fora do padrao, mas a formatacao passou — sao verbos "
@@ -65,27 +70,38 @@ except Exception as e:
     print("  -> todo `%` que deve chegar literal no JS precisa ser `%%`")
     raise SystemExit(1)
 
-# 4) o bloco <script> inline precisa ser JS valido
+# 4) TODO bloco <script> inline precisa ser JS valido (antes so o 1o era checado)
 blocos = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", injecao, flags=re.S)
 if not blocos:
     print("AVISO: nenhum <script> inline na injecao")
-else:
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
-        fh.write(blocos[0])
+for n, bloco in enumerate(blocos, 1):
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+        fh.write(bloco)
         tmp = fh.name
-    r = subprocess.run(["node", "--check", tmp], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["node", "--check", tmp], capture_output=True, text=True)
+    except FileNotFoundError:
+        print("FALHA: `node` nao encontrado no PATH (precisa dele para checar a sintaxe)")
+        falhas.append("node")
+        break
+    finally:
+        # o temporario vazava a cada execucao
+        pathlib.Path(tmp).unlink(missing_ok=True)
     if r.returncode == 0:
-        print(f"sintaxe JS OK ({len(blocos[0])} chars)")
+        print(f"sintaxe JS OK no bloco {n} ({len(bloco)} chars)")
     else:
-        print("FALHA na sintaxe do JS injetado:")
+        print(f"FALHA na sintaxe do JS injetado (bloco {n}):")
         print(r.stderr.strip()[:600])
         falhas.append("sintaxe")
 
-# 5) marcas que ja custaram bug: retorno no meio do IIFE e chaves obrigatorias
-if re.search(r"^\s*return\s*;?\s*$", blocos[0], flags=re.M) if blocos else False:
-    print("AVISO: `return` solto dentro do IIFE — aborta SSE/probes/reset que vem depois")
-for marca in ("__HERMES_STUBS__", "/__events", "localStorage"):
-    if blocos and marca not in blocos[0]:
+# 5) marcas que ja custaram bug: retorno no meio do IIFE e chaves obrigatorias.
+#    Procura na injecao INTEIRA: `__HERMES_STUBS__` nunca esteve no bloco inline (os stubs
+#    vem por <script src="/__stubs.js">) e o aviso antigo era falso positivo fixo.
+for bloco in blocos:
+    if re.search(r"^\s*return\s*;?\s*$", bloco, flags=re.M):
+        print("AVISO: `return` solto dentro do IIFE — aborta SSE/probes/reset que vem depois")
+for marca in ("/__stubs.js", "/__shim.js", "/__events", "localStorage", "FLAGS"):
+    if marca not in injecao:
         print(f"AVISO: a injecao nao menciona {marca} (era esperado)")
 
 if falhas:

@@ -21,13 +21,33 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 > o token do HTML **é** o login, e não existe segundo fator. Se precisar de acesso remoto, use
 > túnel/autenticação de verdade na frente, nunca este servidor.
 
-> 🔑 **O canal de operação `/__cmd` exige token** (executa JS arbitrário na página aberta, que
-> carrega o token da sessão). Ordem de resolução: env `HERMES_DESKTOP_CMD_TOKEN` → arquivo
-> `~/.hermes/state/desktop-cmd-token` (chmod 600) → aleatório por processo, impresso no log de
-> startup. Então: `curl -s -G 'http://127.0.0.1:8890/__cmd' --data-urlencode "js=<expr>"
-> --data-urlencode "token=$(cat ~/.hermes/state/desktop-cmd-token)"`. Sem token a resposta é
-> **403**. `HERMES_DESKTOP_CMD_INSECURE=1` volta ao comportamento antigo — não use com a porta
-> aberta para o resto do aparelho.
+> ⚠️ **Loopback não é fronteira de confiança no Android.** Três vetores alcançam estas portas:
+> sites abertos no Chrome do próprio celular (requisição GET simples = CSRF), DNS rebinding
+> (um domínio que passa a resolver para `127.0.0.1`) e qualquer outro app com permissão
+> INTERNET. Por isso o injetor e o seletor de fotos respondem **403** a `Host` que não seja
+> `127.0.0.1:<porta>`/`localhost:<porta>` e recusam `Origin`/`Sec-Fetch-Site` de outro site nas
+> rotas que mudam estado (`/__cmd`, `/__bump`, `/__err`, `/__token`, `/choose`). Contra o terceiro
+> vetor (app local) só segredo ajuda — é o que o token do `/__cmd` e o do seletor fazem.
+
+> 🔑 **O canal de operação `/__cmd` vem DESLIGADO** (ele executa JS arbitrário com `eval` na
+> página aberta, que carrega o token da sessão). Liga com `HERMES_DESKTOP_CMD=1` no ambiente de
+> quem sobe o servidor — o segredo é gerado em `~/.hermes/state/desktop-cmd-token` (0600) se
+> ainda não existir — ou automaticamente quando esse arquivo (ou a env
+> `HERMES_DESKTOP_CMD_TOKEN`) já existe, que é o fluxo antigo. `HERMES_DESKTOP_CMD=0` desliga
+> sempre. Desligado, a página nem tem o ramo do `eval`. O token **não** vai mais para o log.
+> Uso (POST, preferido):
+> `curl -s http://127.0.0.1:8890/__cmd -H 'content-type: application/json'
+> -H "X-Hermes-Cmd-Token: $(cat ~/.hermes/state/desktop-cmd-token)" -d '{"js":"document.title"}'`.
+> O GET antigo (`-G --data-urlencode "js=…" --data-urlencode "token=…"`) continua aceito.
+> `HERMES_DESKTOP_CMD_INSECURE=1` liga sem token — não use.
+
+> 📝 **Telemetria é opt-in** (`HERMES_WEB_TELEMETRY`): sem a env, o log recebe só erros do
+> navegador (`error`, `unhandledrejection`, `console.error/warn`). `=1` soma geometria, pulso de
+> 10 s e as **chaves** do `localStorage`; `=dom` soma o **texto da página** e os valores do
+> `localStorage` (é trecho de conversa — use só para depurar a UI do desktop). O chat (8891) sobe
+> sempre com telemetria desligada. O log gira sozinho em 2 MB (`HERMES_WEB_LOG_MAX`).
+> Os remendos do porte (`Object.prototype.trim`, `matchMedia` fixado, reset das chaves de
+> layout) só entram na UI do desktop (`HERMES_WEB_DESKTOP_FIXES=1`, padrão só na 8890).
 
 ## Superfícies (subir e manter de pé)
 
@@ -37,7 +57,7 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 | `dashboard-watchdog.sh` | Laço de 60 s chamando `dashboard-up.sh`, guarda de instância única por pidfile (pid + starttime, imune a reuso de PID), segurando `termux-wake-lock` — e o devolvendo no trap de saída. Rode-o desgarrado (`setsid`) para ele virar PPid 1 e sobreviver à sessão do agente. |
 | `10-hermes-dashboard.sh` | Script de boot (`~/.termux/boot/`, via app **Termux:Boot**): espera 20 s e sobe o watchdog. **Um só** script de boot — duplicados disputam a mesma porta. |
 | `hermes-app` | Garante que o dashboard (9119) esteja no ar e abre a tela clicável. |
-| `hermes-desktop-web.py` | O injetor: servidor stdlib que serve um SPA local e injeta (a) o token da sessão, (b) o shim da ponte, (c) captura de erro + telemetria de DOM em `~/.hermes/logs/desktop-web.log`, (d) canal **SSE** `/__events` — um POST em `/__bump` empurra `location.reload()` para as páginas abertas, o que funciona com a aba em segundo plano (o Chrome congela `setInterval` de aba inativa). Reutilizável: `HERMES_DESKTOP_WEB=<dir> HERMES_DESKTOP_WEB_PORT=<porta>` serve qualquer SPA local. |
+| `hermes-desktop-web.py` | O injetor: servidor stdlib que serve um SPA local e injeta (a) o token da sessão, (b) o shim da ponte, (c) captura de erro (+ telemetria de DOM, opt-in) em `~/.hermes/logs/desktop-web.log`, (d) canal **SSE** `/__events` — um POST (ou GET) em `/__bump` empurra `location.reload()` para as páginas abertas, o que funciona com a aba em segundo plano (o Chrome congela `setInterval` de aba inativa), (e) `/__token`, que devolve o token **atual** do backend para a página se recuperar quando o dashboard reinicia. Reutilizável: `HERMES_DESKTOP_WEB=<dir> HERMES_DESKTOP_WEB_PORT=<porta>` serve qualquer SPA local; uma página que traga `<meta http-equiv="Content-Security-Policy">` com `__HERMES_NONCE__` recebe nonce novo por resposta (é o caso do chat). |
 | `hermes-desktop-up` / `hermes-desktop` | Sobe e abre a UI do desktop portada (8890). |
 | `hermes-desktop-zoom` | Escolhe o tamanho do texto da UI portada. O tamanho é o **inverso** da largura de viewport injetada (`width=N`; N menor = texto maior). Fica gravado em `~/.hermes/state/desktop-web-viewport` (sem arquivo, o `hermes-desktop-up` cai no 900). |
 | `hermes-desktop-reload` | Recarrega a UI de forma confiável (abrir a mesma URL numa aba já aberta só foca a aba). |
