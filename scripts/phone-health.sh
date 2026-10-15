@@ -26,14 +26,23 @@ ok "skills ativas: $n (estacionadas: $p — restaurar: bash $H/scripts/skills-re
 # 3. app do Hermes (dashboard :9119) + watchdog
 code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/api/health 2>/dev/null)
 [ "$code" = "200" ] && ok "dashboard/app respondendo (health 200)" || bad "dashboard fora do ar (health=$code) — corrija: bash $H/scripts/dashboard-up.sh"
-wp=$(cat "$H/state/dashboard-watchdog.pid" 2>/dev/null)
-if [ -n "$wp" ] && [ -d "/proc/$wp" ]; then ok "watchdog vivo (pid $wp, PPid $(awk '/^PPid/{print $2}' /proc/$wp/status))"; else warn "watchdog parado — suba: setsid $H/scripts/dashboard-watchdog.sh &"; fi
+wp=""; wp_st=""
+[ -r "$H/state/dashboard-watchdog.pid" ] && read -r wp wp_st <"$H/state/dashboard-watchdog.pid"
+if [ -n "$wp" ] && [ -d "/proc/$wp" ]; then
+  atual=$(awk '{n=split($0,a,")"); split(a[n],f," "); print f[20]}' "/proc/$wp/stat" 2>/dev/null)
+  if [ -z "$wp_st" ] || [ -z "$atual" ] || [ "$atual" = "$wp_st" ]; then
+    ok "watchdog vivo (pid $wp, PPid $(awk '/^PPid/{print $2}' /proc/$wp/status))"
+  else
+    warn "pidfile do watchdog aponta para PID reaproveitado pelo sistema — suba de novo: setsid $H/scripts/dashboard-watchdog.sh &"
+  fi
+else warn "watchdog parado — suba: setsid $H/scripts/dashboard-watchdog.sh &"; fi
 
 # 4. wake lock (sem ele o Android congela o Termux e o app morre)
+# O lock pertence ao APP Termux (não conta tomadas) e não tem comando de status
+# confável em toda versão do Termux:API — então aqui só mostramos a presença.
+# Quem segura (e devolve no trap de saída) é o dashboard-watchdog.
 if command -v termux-wake-lock >/dev/null 2>&1; then
-  if ls /data/data/com.termux/files/usr/var/lib/proot-distro >/dev/null 2>&1; then :; fi
-  held=$(grep -c . /proc/*/cmdline 2>/dev/null >/dev/null; echo "")
-  ok "termux-wake-lock disponível (o watchdog segura o lock)"
+  ok "termux-wake-lock instalado (segurado pelo watchdog enquanto ele rodar)"
 else warn "termux-wake-lock não encontrado (instale Termux:API p/ segurar o lock)"; fi
 
 # 5. espaço

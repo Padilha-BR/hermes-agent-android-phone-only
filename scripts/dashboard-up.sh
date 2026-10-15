@@ -19,14 +19,22 @@ ensure_pwa() {
   P="$HOME/hermes-app"
   [ -f "$D/index.html" ] || return 0
   if [ ! -s "$D/manifest.webmanifest" ] || ! grep -q 'manifest.webmanifest' "$D/index.html" 2>/dev/null; then
-    cp -f "$P/icon-192.png" "$P/icon-512.png" "$D/" 2>/dev/null
-    "$HOME/hermes-agent/venv/bin/python" "$P/patch_dashboard_pwa.py" "$D" >>"$LOG" 2>&1
-    echo "$(date '+%F %T') patch PWA reaplicado em $D" >>"$LOG"
+    if cp -f "$P/icon-192.png" "$P/icon-512.png" "$D/" 2>>"$LOG"; then :; else
+      echo "$(date '+%F %T') aviso: icones PWA nao encontrados em $P (estao fora do repo)" >>"$LOG"
+    fi
+    if "$HOME/hermes-agent/venv/bin/python" "$P/patch_dashboard_pwa.py" "$D" >>"$LOG" 2>&1; then
+      echo "$(date '+%F %T') patch PWA reaplicado em $D" >>"$LOG"
+    else
+      echo "$(date '+%F %T') FALHA ao reaplicar patch PWA ($P/patch_dashboard_pwa.py) — instalacao do PWA pode ter ficado quebrada" >>"$LOG"
+    fi
   fi
   # visual "cara de desktop" (CSS): rebuild do web_dist apaga o bloco, então reaplica
   if [ -f "$HOME/.hermes/desktop-look.css" ] && ! grep -q 'hermes-desktop-look' "$D/index.html" 2>/dev/null; then
-    "$HOME/hermes-agent/venv/bin/python" "$HOME/.hermes/bin/patch-dashboard-look.py" "$D" >>"$LOG" 2>&1
-    echo "$(date '+%F %T') CSS desktop-look reaplicado" >>"$LOG"
+    if "$HOME/hermes-agent/venv/bin/python" "$HOME/.hermes/bin/patch-dashboard-look.py" "$D" >>"$LOG" 2>&1; then
+      echo "$(date '+%F %T') CSS desktop-look reaplicado" >>"$LOG"
+    else
+      echo "$(date '+%F %T') FALHA ao reaplicar CSS desktop-look (veja $LOG)" >>"$LOG"
+    fi
   fi
 }
 
@@ -53,4 +61,12 @@ for _ in $(seq 1 60); do
 done
 
 echo "$(date '+%F %T') FALHA: dashboard nao subiu" >>"$LOG"
+# devolve o wake-lock tomado acima — mas só se ninguém de longa duração estiver
+# segurando: o lock é do APP Termux (não conta tomadas) e quem segura normalmente
+# é o dashboard-watchdog; derrubar o lock dele aqui deixaria o app sem guarda
+wp=""
+[ -r "$HERMES_HOME/state/dashboard-watchdog.pid" ] && wp=$(awk '{print $1}' "$HERMES_HOME/state/dashboard-watchdog.pid" 2>/dev/null)
+if [ -z "$wp" ] || ! kill -0 "$wp" 2>/dev/null; then
+  termux-wake-unlock >/dev/null 2>&1
+fi
 exit 1

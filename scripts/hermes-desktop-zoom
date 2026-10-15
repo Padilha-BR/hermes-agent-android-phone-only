@@ -24,13 +24,29 @@ case "$NOVO" in
   *[!0-9]*|"") echo "uso: hermes-desktop-zoom [largura em px]"; exit 1 ;;
 esac
 if [ "$NOVO" -lt 660 ]; then
-  echo "aviso: abaixo de 640px o app colapsa a barra lateral em overlay. Use 660+."
+  echo "aviso: abaixo de 660px o app tende a colapsar a barra lateral (minimo real do app: 640px). Use 660+."
 fi
 mkdir -p "$H/state"
 printf '%s' "$NOVO" > "$ARQ"
 echo "viewport: ${ATUAL} → ${NOVO} (recarregando…)"
-# reinicia o servidor com o novo valor e força uma carga nova
-for pid in $(ps -eo pid,args 2>/dev/null | awk '/hermes-desktop-web.py/ && !/awk/ {print $1}'); do kill "$pid" 2>/dev/null; done
+# reinicia o servidor com o novo valor e força uma carga nova.
+# SÓ o servidor do DESKTOP (8890): o mesmo script serve também o chat nativo
+# (8891, que o watchdog sobe com HERMES_DESKTOP_WEB_PORT=8891) — matar pelo
+# nome do script derrubava o chat junto. A porta não aparece no `ps args`, então
+# lemos /proc/<pid>/environ (mesmo uid no Termux) e só matamos o 8890/sem porta.
+mortos=0
+for pid in $(pgrep -f hermes-desktop-web.py 2>/dev/null); do
+  envs=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
+  if [ -z "$envs" ]; then
+    echo "aviso: pid $pid sem environ legivel — nao matei (pode ser o chat)" >&2
+    continue
+  fi
+  porta=$(printf '%s\n' "$envs" | sed -n 's/^HERMES_DESKTOP_WEB_PORT=//p')
+  case "$porta" in
+    ""|8890) kill "$pid" 2>/dev/null && mortos=$((mortos+1)) ;;
+  esac
+done
+echo "servidor(es) do desktop reiniciado(s): $mortos (chat 8891 preservado)"
 sleep 2
 HERMES_WEB_VIEWPORT_WIDTH="$NOVO" bash "$H/bin/hermes-desktop-up" >/dev/null 2>&1
 sleep 1

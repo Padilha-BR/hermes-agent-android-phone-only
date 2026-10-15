@@ -28,6 +28,14 @@ SHIM = Path(os.environ.get("HERMES_DESKTOP_SHIM", str(HERMES_HOME / "bin" / "shi
 PORT = int(os.environ.get("HERMES_DESKTOP_WEB_PORT", "8890"))
 BACKEND = os.environ.get("HERMES_BACKEND", "http://127.0.0.1:9119")
 LOG = Path(os.environ.get("HERMES_WEB_LOG", str(HERMES_HOME / "logs" / "desktop-web.log")))
+# /__cmd executa JS arbitrário nas páginas abertas. Sem exigir token, qualquer
+# app do aparelho alcança 127.0.0.1 (no Android o loopback NÃO exige permissão
+# de rede) e dirige a UI que carrega o token da sessão. Token = env
+# HERMES_DESKTOP_CMD_TOKEN (estável, para scripts) ou um aleatório por processo
+# (impresso no log de startup). HERMES_DESKTOP_CMD_INSECURE=1 volta ao
+# comportamento antigo, para quem só opera localmente.
+CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or uuid.uuid4().hex
+CMD_INSEGURO = os.environ.get("HERMES_DESKTOP_CMD_INSECURE", "") == "1"
 LAST_TOKEN = ""  # último token lido do backend, só para redigir no log
 VERSION = str(time.time())  # muda a cada correção → a página aberta recarrega sozinha
 RELOAD_FLAGS: list = []  # sinalizadores das páginas abertas (canal SSE)
@@ -427,10 +435,15 @@ class Handler(BaseHTTPRequestHandler):
             log(f"versao nova: {VERSION} — recarga empurrada para {n} pagina(s) aberta(s)")
             return self._send(VERSION.encode(), "text/plain")
         if path == "/__cmd":
-            # operação remota da UI aberta: /__cmd?js=<urlencoded>
+            # operação remota da UI aberta: /__cmd?js=<urlencoded>&token=<CMD_TOKEN>
             from urllib.parse import parse_qs
 
             q = parse_qs(urlparse(self.path).query)
+            if not CMD_INSEGURO and (q.get("token") or [""])[0] != CMD_TOKEN:
+                log("[cmd] recusado: token ausente/errado (veja o token de startup "
+                    "no log, ou defina HERMES_DESKTOP_CMD_TOKEN)")
+                return self._send(b'{"ok":false,"erro":"token ausente ou invalido"}',
+                                  "application/json", 403)
             js = (q.get("js") or [""])[0]
             if not js:
                 return self._send(b'{"ok":false,"erro":"sem js"}', "application/json", 400)
@@ -509,7 +522,10 @@ class Handler(BaseHTTPRequestHandler):
                                   f'<meta name="viewport" content="width={largura}">',
                                   html, count=1, flags=re.I)
                 else:
-                    html = html.replace("</head>", f'<meta name="viewport" content="width={largura}">' + inj + "</head>", 1)
+                    # só a meta aqui: o inj entra UMA vez no bloco do </head> mais
+                    # abaixo (injetar aqui também duplicava o <script> da ponte —
+                    # duas conexões SSE, dois probes, shim registrado 2x)
+                    html = html.replace("</head>", f'<meta name="viewport" content="width={largura}"></head>', 1)
             # CSS extra do porte (lista separada por vírgula). Inclui as fontes
             # embutidas em data URI: o wordmark usa a Collapse com font-display:swap e,
             # quando a requisição dela falha, a tela fica na fonte de sistema.
@@ -528,6 +544,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     log(f"servindo {BUNDLE} em http://127.0.0.1:{PORT} (backend {BACKEND})")
+    if not CMD_INSEGURO:
+        log(f"/__cmd exige token={CMD_TOKEN} (HERMES_DESKTOP_CMD_TOKEN fixa a env; "
+            f"HERMES_DESKTOP_CMD_INSECURE=1 desliga a checagem)")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 
