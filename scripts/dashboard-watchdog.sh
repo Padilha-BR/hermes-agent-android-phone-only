@@ -38,6 +38,17 @@ while true; do
   "$UP"
   # mantém também a UI do desktop (porta 8890) no ar
   [ -x "$HERMES_HOME/bin/hermes-desktop-up" ] && "$HERMES_HOME/bin/hermes-desktop-up" >/dev/null 2>&1
+  # e o sshd do Termux (porta 8022, so chave publica), config em $PREFIX/etc/ssh/sshd_config.d/*.conf
+  if ! pgrep -x sshd >/dev/null 2>&1; then
+    echo "$(date '+%F %T') sshd ausente, ressuscitando" >>"$HERMES_HOME/logs/sshd.log"
+    sshd >>"$HERMES_HOME/logs/sshd.log" 2>&1
+  fi
+  # e o Chromium nativo com CDP na 9222 — motor do browser_exec do Hermes
+  # (o Hermes não empacota Chromium arm64-android; browser.cdp_url aponta pra cá)
+  if ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:${CHROME_CDP_PORT:-9222}/json/version"; then
+    echo "$(date '+%F %T') chromium CDP ausente, ressuscitando" >>"$HERMES_HOME/logs/chrome-cdp.log"
+    "$HERMES_HOME/bin/chrome-cdp" up >>"$HERMES_HOME/logs/chrome-cdp.log" 2>&1
+  fi
   # e o chat nativo (porta 8891), quando o app existir
   if [ -f "$HERMES_HOME/chat/index.html" ]; then
     curl -s -o /dev/null --max-time 3 "http://127.0.0.1:${HERMES_CHAT_PORT:-8891}/__health" || \
