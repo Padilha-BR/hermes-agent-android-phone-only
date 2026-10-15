@@ -8,8 +8,10 @@
   'use strict'
 
   const BACKEND = window.__HERMES_BACKEND__ || 'http://127.0.0.1:9119'
-  const TOKEN = window.__HERMES_SESSION_TOKEN__ || ''
-  const WS_URL = BACKEND.replace(/^http/, 'ws') + '/api/ws?token=' + encodeURIComponent(TOKEN)
+  // o token MUDA quando o backend reinicia (o watchdog faz isso): não é const.
+  // Depois de algumas falhas seguidas o app pede o atual em /__token.
+  let TOKEN = window.__HERMES_SESSION_TOKEN__ || ''
+  const wsUrl = () => BACKEND.replace(/^http/, 'ws') + '/api/ws?token=' + encodeURIComponent(TOKEN)
 
   const $ = (id) => document.getElementById(id)
   const main = $('main'), txt = $('txt'), btEnviar = $('btEnviar'), ponto = $('ponto')
@@ -17,8 +19,10 @@
   const gaveta = $('gaveta'), infoModelo = $('infoModelo'), infoUso = $('infoUso')
   const chips = $('chips'), arquivo = $('arquivo'), btAnexo = $('btAnexo')
 
-  let ws = null, seq = 0, pend = new Map(), sid = null, rodando = false
-  let bolhaIA = null, bufIA = '', pensando = null, tentativas = 0, ultimoTexto = ''
+  // sid = id VIVO (prompt.submit usa este); sidSalvo = id da conversa salva, o
+  // que o session.resume aceita depois de uma reconexão/restart do backend.
+  let ws = null, seq = 0, pend = new Map(), sid = null, sidSalvo = null, rodando = false
+  let bolhaIA = null, bufIA = '', pensando = null, tentativas = 0
   let autoScroll = true, anexos = [], tituloSessao = ''
 
   // ── utilidades ─────────────────────────────────────────────────────────────
@@ -46,10 +50,10 @@
       h = h.replace(/`([^`]+)`/g, '<code>$1</code>')
       h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       h = h.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      // href = $2 (a URL, que precisa ser http/https e não pode ter aspa);
+      // href = $2 (a URL, que precisa ser http(s):// e não pode ter aspa);
       // texto = $1. Estava INVERTIDO: href recebia o label — link navegava pra
       // um caminho relativo aleatório e o label podia ser javascript:...
-      h = h.replace(/\[([^\]]+)\]\((https?:[^)\s"'<>]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"'<>]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
       h = h.replace(/^### (.*)$/gm, '<h3>$1</h3>')
       h = h.replace(/^## (.*)$/gm, '<h2>$1</h2>')
       h = h.replace(/^# (.*)$/gm, '<h1>$1</h1>')
@@ -73,8 +77,10 @@
     limparVazio()
     const el = document.createElement('div')
     el.className = 'msg ' + quem
+    // .ferramentas e .texto separados: o streaming reescreve só o .texto, então as
+    // marcas de ferramenta (⚙ / ✓) não somem a cada delta
     el.innerHTML = '<div class="quem">' + (quem === 'user' ? 'você' : 'hermes') + '</div>' +
-      '<div class="bolha">' + html + '</div>' + (extra || '')
+      '<div class="bolha"><div class="ferramentas"></div><div class="texto">' + html + '</div></div>' + (extra || '')
     if (quem === 'ia') {
       const acoes = document.createElement('div')
       acoes.className = 'acoes'
@@ -82,7 +88,7 @@
       bc.textContent = 'copiar'
       bc.onclick = async () => {
         try {
-          await navigator.clipboard.writeText(el.querySelector('.bolha').innerText.trim())
+          await navigator.clipboard.writeText(el.querySelector('.bolha .texto').innerText.trim())
           bc.textContent = 'copiado'
           setTimeout(() => { bc.textContent = 'copiar' }, 1400)
         } catch (e) { bc.textContent = 'falhou' }
@@ -100,32 +106,49 @@
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== 1) return reject(new Error('sem conexão'))
       const id = ++seq
-      pend.set(id, { resolve, reject })
+      const timer = setTimeout(() => { if (pend.has(id)) { pend.delete(id); reject(new Error('tempo esgotado: ' + metodo)) } }, 60000)
+      pend.set(id, { resolve, reject, timer })
       ws.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: metodo, params: params || {} }))
-      setTimeout(() => { if (pend.has(id)) { pend.delete(id); reject(new Error('tempo esgotado: ' + metodo)) } }, 60000)
     })
+  }
+
+  // conexão caiu: quem esperava resposta nunca vai receber — rejeita JÁ (antes
+  // ficavam penduradas 60 s e o botão continuava em "parar")
+  function derrubarPendentes(motivo) {
+    pend.forEach(({ reject, timer }) => { clearTimeout(timer); try { reject(new Error(motivo)) } catch (e) {} })
+    pend.clear()
+    if (pensando) { pensando.remove(); pensando = null }
+    if (bolhaIA) { pintarIA(false); bolhaIA = null }
+    bufIA = ''
+    rodando = false
+    atualizarBotao()
   }
 
   function conectar() {
     ligar(false)
     sub.textContent = 'conectando…'
-    try { ws = new WebSocket(WS_URL) } catch (e) { agendarReconexao(); return }
+    let meu
+    try { meu = new WebSocket(wsUrl()) } catch (e) { agendarReconexao(); return }
+    ws = meu
 
-    ws.onopen = async () => {
+    meu.onopen = async () => {
       tentativas = 0
       ligar(true)
       bannerLimpar()
       try { await rpc('client.capabilities', { server_requests: true }) } catch (e) {}
+      // reconexão: o sid vivo pode ter sido recolhido pelo gateway (ou o backend
+      // reiniciou) — retoma pela conversa SALVA em vez de mandar no sid velho
       if (!sid) await novaConversa(true)
-      else sub.textContent = tituloSessao || 'conectado'
+      else await retomar(true)
       carregarLista()
     }
 
-    ws.onmessage = (ev) => {
+    meu.onmessage = (ev) => {
       let msg
       try { msg = JSON.parse(ev.data) } catch (e) { return }
       if (msg.id && pend.has(msg.id)) {
-        const { resolve, reject } = pend.get(msg.id)
+        const { resolve, reject, timer } = pend.get(msg.id)
+        clearTimeout(timer)
         pend.delete(msg.id)
         if (msg.error) reject(new Error(msg.error.message || 'erro no gateway'))
         else resolve(msg.result)
@@ -134,20 +157,54 @@
       if (msg.method === 'event') tratarEvento(msg.params || {})
     }
 
-    ws.onclose = () => { ligar(false, true); sub.textContent = 'reconectando…'; agendarReconexao() }
-    ws.onerror = () => ligar(false, true)
+    meu.onclose = () => {
+      if (ws !== meu) return // socket antigo, já substituído
+      ligar(false, true); sub.textContent = 'reconectando…'
+      derrubarPendentes('conexão caiu')
+      agendarReconexao()
+    }
+    meu.onerror = () => ligar(false, true)
   }
 
   function agendarReconexao() {
     tentativas++
     const espera = Math.min(15000, 800 * Math.pow(1.7, Math.min(tentativas, 6)))
     bannerMostrar('Sem conexão com o Hermes — tentando de novo…')
+    // backend reiniciado = token novo; o velho falha para sempre. A partir da 3ª
+    // falha seguida, pergunta o token atual ao servidor que serviu a página.
+    if (tentativas >= 3) renovarToken()
     setTimeout(conectar, espera)
   }
 
+  async function renovarToken() {
+    try {
+      const r = await fetch('/__token', { cache: 'no-store', credentials: 'same-origin' })
+      if (r.status === 404) {
+        // servidor antigo, sem /__token: recarregar a página traz o token novo no
+        // HTML. No máximo uma vez a cada 5 min, para não virar laço.
+        let ult = 0
+        try { ult = Number(sessionStorage.getItem('__hermes_chat_reload') || 0) } catch (e) {}
+        if (Date.now() - ult > 300000) {
+          try { sessionStorage.setItem('__hermes_chat_reload', String(Date.now())) } catch (e) {}
+          location.reload()
+        }
+        return
+      }
+      if (!r.ok) return // backend ainda fora (503): tenta de novo na próxima falha
+      const j = await r.json()
+      if (j && j.token && j.token !== TOKEN) { TOKEN = j.token; tentativas = 0 }
+    } catch (e) { /* servidor da página fora também: a próxima tentativa refaz */ }
+  }
+
   // ── eventos do gateway ─────────────────────────────────────────────────────
+  // eventos globais (não pertencem a uma conversa)
+  const GLOBAIS = new Set(['gateway.ready', 'sessions.changed'])
+
   function tratarEvento(p) {
     const tipo = p.type, carga = p.payload || {}
+    // filtra por conversa: streaming de uma sessão antiga (outra aba, conversa
+    // trocada no meio do turno) não pode cair na conversa aberta
+    if (p.session_id && sid && !GLOBAIS.has(tipo) && p.session_id !== sid && p.session_id !== sidSalvo) return
     switch (tipo) {
       case 'gateway.ready':
         aplicarSkin(carga.skin)
@@ -177,7 +234,6 @@
       case 'message.complete':
         if (pensando) { pensando.remove(); pensando = null }
         bufIA = carga.text || bufIA
-        ultimoTexto = bufIA
         if (!bolhaIA) bolhaIA = addMensagem('ia', '')
         pintarIA(false)
         if (carga.usage) mostrarUso(carga.usage)
@@ -189,7 +245,7 @@
       case 'tool.generating': {
         if (!bolhaIA) bolhaIA = addMensagem('ia', '')
         const nome = carga.name || carga.tool || 'ferramenta'
-        const alvo = bolhaIA.querySelector('.bolha')
+        const alvo = bolhaIA.querySelector('.bolha .ferramentas')
         if (!alvo.querySelector('.ferramenta:last-child') || alvo.dataset.ultimaFerramenta !== nome) {
           const f = document.createElement('div')
           f.className = 'ferramenta'
@@ -217,6 +273,11 @@
       case 'sessions.changed':
         if (gaveta.classList.contains('aberta')) carregarLista()
         break
+      case 'session.reclaimed':
+        // o gateway recolheu a sessão viva (ex.: ws_orphan_reap): o sid não vale
+        // mais; retoma pela conversa salva antes do próximo envio
+        if (ws && ws.readyState === 1) retomar(true)
+        break
       case 'error':
         bannerMostrar('Erro do Hermes: ' + (carga.message || carga.error || JSON.stringify(carga)))
         rodando = false
@@ -229,7 +290,7 @@
 
   function pintarIA(final) {
     if (!bolhaIA) return
-    const alvo = bolhaIA.querySelector('.bolha')
+    const alvo = bolhaIA.querySelector('.bolha .texto')
     alvo.innerHTML = md(bufIA) + (final === false ? '' : '<span class="cursor"></span>')
     rolar()
   }
@@ -256,7 +317,8 @@
     try {
       const r = await rpc('session.create', {})
       sid = r.session_id || r.id
-      bolhaIA = null; bufIA = ''; ultimoTexto = ''; pensando = null; anexos = []
+      sidSalvo = r.stored_session_id || sid
+      bolhaIA = null; bufIA = ''; pensando = null; anexos = []
       tituloSessao = ''
       titulo.firstChild.textContent = 'Hermes'
       sub.textContent = 'conectado'
@@ -267,12 +329,31 @@
     } catch (e) { bannerMostrar('Não consegui abrir conversa: ' + e.message) }
   }
 
+  // Reabre a conversa atual pelo id SALVO (session.resume devolve o id vivo novo e
+  // o histórico). Usado na reconexão e no session.reclaimed. Se o gateway não
+  // conhecer a conversa (nova e ainda vazia, por exemplo), abre outra.
+  async function retomar(redesenhar) {
+    const alvo = sidSalvo || sid
+    if (!alvo) return novaConversa(true)
+    try {
+      const r = await rpc('session.resume', { session_id: alvo, source: 'desktop' })
+      sid = (r && r.session_id) || sid
+      if (redesenhar && r && Array.isArray(r.messages) && r.messages.length && !rodando) {
+        renderHistorico(r.messages)
+      }
+      sub.textContent = tituloSessao || 'conectado'
+    } catch (e) {
+      bannerMostrar('Não consegui retomar a conversa (' + e.message + ') — abri uma nova.')
+      await novaConversa(true)
+    }
+  }
+
   async function enviar() {
     const texto = txt.value.trim()
     if (!texto && !anexos.length) return
     if (rodando) return
     txt.value = ''; autoajustar()
-    addMensagem('user', md(texto || '(imagem)'))
+    const bolhaUser = addMensagem('user', md(texto || '(imagem)'))
     const anexosEnviar = anexos.slice()
     anexos = []; renderChips()
     rodando = true; atualizarBotao(); bolhaIA = null; bufIA = ''
@@ -285,6 +366,11 @@
     } catch (e) {
       bannerMostrar('Falha ao enviar: ' + e.message)
       rodando = false; atualizarBotao()
+      // não chegou ao gateway: devolve o texto ao composer (antes ele sumia) e os
+      // anexos aos chips, e tira a bolha que fingia ter enviado
+      if (!txt.value) { txt.value = texto; autoajustar() }
+      if (anexosEnviar.length && !anexos.length) { anexos = anexosEnviar; renderChips() }
+      bolhaUser.remove()
     }
   }
 
@@ -326,23 +412,25 @@
       // Ele devolve o id vivo + o histórico; a partir daí o prompt.submit usa esse id novo.
       const r = await rpc('session.resume', { session_id: id, source: 'desktop' })
       sid = r.session_id || id
-      const msgs = r.messages || []
-      main.innerHTML = ''
-      if (!msgs.length) main.innerHTML = '<div class="vazio">Conversa vazia.</div>'
-      msgs.forEach((m) => {
-        const papel = (m.role || m.type || '').toLowerCase()
-        const corpo = textoDe(m)
-        if (!corpo) return
-        if (papel === 'user') addMensagem('user', md(corpo))
-        else if (papel === 'assistant' || papel === 'ai') addMensagem('ia', md(corpo))
-      })
-      bolhaIA = null; bufIA = ''
-      const ult = msgs.filter((m) => (m.role || '') === 'assistant').pop()
-      if (ult) ultimoTexto = textoDe(ult)
-      rolar(true)
+      sidSalvo = id
+      renderHistorico(r.messages || [])
     } catch (e) {
       main.innerHTML = '<div class="vazio">Não consegui carregar: ' + esc(e.message) + '</div>'
     }
+  }
+
+  function renderHistorico(msgs) {
+    main.innerHTML = ''
+    if (!msgs.length) main.innerHTML = '<div class="vazio">Conversa vazia.</div>'
+    msgs.forEach((m) => {
+      const papel = (m.role || m.type || '').toLowerCase()
+      const corpo = textoDe(m)
+      if (!corpo) return
+      if (papel === 'user') addMensagem('user', md(corpo))
+      else if (papel === 'assistant' || papel === 'ai') addMensagem('ia', md(corpo))
+    })
+    bolhaIA = null; bufIA = ''
+    rolar(true)
   }
 
   function textoDe(m) {
@@ -377,7 +465,7 @@
       try {
         const r = await fetch(BACKEND + '/api/chat/image-upload', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'X-Hermes-Session-Token': TOKEN },
+          headers: { 'content-type': 'application/json', 'X-Hermes-Session-Token': TOKEN }, // TOKEN atual (pode ter sido renovado)
           body: JSON.stringify({ data_url: leitor.result, filename: f.name || 'foto.jpg' })
         })
         if (!r.ok) throw new Error('HTTP ' + r.status)
