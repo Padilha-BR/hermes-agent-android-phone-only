@@ -1,0 +1,17 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-mobile — Hermes no celular: start leve e com aviso dos comandos de toque.
+# Uso:  h  |  hermes-mobile  |  hermes-mobile --continue   (continua a última conversa)
+
+# Builds de pacote no celular: paralelismo baixo evita travar o aparelho
+export CARGO_BUILD_JOBS=2
+export CARGO_PROFILE_RELEASE_LTO=off
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+export HERMES_FAST_STARTUP_BANNER=1
+
+echo "───────────────────────────────────────────────"
+echo " Hermes mobile"
+echo "  parar o agente: mande uma mensagem + Enter, ou ESC / CTRL+C"
+echo "  /help = comandos · /quit = sair · hstatus = estado"
+echo "───────────────────────────────────────────────"
+
+exec hermes --cli "$@"

@@ -1,0 +1,13 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-desktop — abre a UI do app DESKTOP do Hermes (portada pra rodar no celular),
+# servida localmente na porta 8890 e conectada no backend do Hermes.
+URL="http://127.0.0.1:8890"
+
+"$HOME/.hermes/bin/hermes-desktop-up" || exit 1
+
+echo "UI do desktop no ar: $URL"
+echo "(abrir no navegador; se nao abrir sozinho, cole este endereco)"
+echo -n "$URL" | termux-clipboard-set 2>/dev/null
+termux-open-url "$URL" >/dev/null 2>&1
+am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+echo "log de erros da UI: ~/.hermes/logs/desktop-web.log"

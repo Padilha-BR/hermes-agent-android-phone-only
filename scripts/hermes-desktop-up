@@ -1,0 +1,27 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-desktop-up — garante que a UI do app DESKTOP (porta 8890) esteja no ar.
+# Idempotente. Usada pelo comando `hermes-desktop` e pelo vigia.
+H="$HOME/.hermes"
+BUNDLE="${HERMES_DESKTOP_WEB:-$HOME/hermes-agent/.hermes-port/renderer}"
+PORT="${HERMES_DESKTOP_WEB_PORT:-8890}"
+URL="http://127.0.0.1:$PORT"
+LOG="$H/logs/desktop-web-server.log"
+mkdir -p "$H/logs"
+
+[ -f "$BUNDLE/index.html" ] || { echo "bundle ausente em $BUNDLE"; exit 1; }
+
+curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+
+cd "$HOME" || exit 1
+# tamanho da viewport: o Chrome encolhe a UI pra caber, então MENOR = texto MAIOR.
+# Valor fica em state/desktop-web-viewport (mude com `hermes-desktop-zoom`).
+VIEWPORT="${HERMES_WEB_VIEWPORT_WIDTH:-$(cat "$H/state/desktop-web-viewport" 2>/dev/null || echo 900)}"
+HERMES_DESKTOP_WEB="$BUNDLE" HERMES_WEB_VIEWPORT_WIDTH="$VIEWPORT" \
+  HERMES_WEB_EXTRA_CSS="$H/desktop-fonts.css,$H/desktop-port.css" \
+  setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
+for _ in $(seq 1 15); do
+  sleep 1
+  curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+done
+echo "nao subiu — veja $LOG"
+exit 1

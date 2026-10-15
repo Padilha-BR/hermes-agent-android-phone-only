@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>Hermes</title>
+<style>
+/* ── JetBrains Mono (empacotada localmente, igual ao desktop) ─────────────── */
+@font-face{font-family:'JB Mono';src:url('fonts/JetBrainsMono-Regular.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'JB Mono';src:url('fonts/JetBrainsMono-Bold.woff2') format('woff2');font-weight:700;font-display:swap}
+
+/* ── tokens: paleta REAL do app desktop do Hermes ─────────────────────────── */
+:root{
+  --bg:#0d1015;          /* fundo do desktop      */
+  --sidebar:#010409;     /* barra lateral         */
+  --bubble:#0e1623;      /* bolha do assistente   */
+  --user-bubble:#07162c; /* bolha do usuário      */
+  --popover:#161b22;     /* painéis               */
+  --elevated:#16191d;
+  --muted:#1a1e24;
+  --secondary:#1d2e4f;
+  --accent:#4a84fe;      /* acento azul do desktop */
+  --accent-solid:#3b6acb;
+  --accent-soft:#17243a;
+  --accent-fg:#161616;
+  --fg:#e6edf3;
+  --muted-fg:#7d8590;
+  --border:#30363d;
+  --destructive:#f85149;
+  --success:#00b5ab;
+  --warning:#c08532;
+  --editor:#090b0f;
+  --raio:3px; --raio-g:5px;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:'JB Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{background:var(--bg); color:var(--fg); font:15.5px/1.55 var(--sans);
+  display:flex; flex-direction:column; height:100dvh; -webkit-text-size-adjust:100%;
+  overscroll-behavior-y:contain}
+
+/* ── topo ─────────────────────────────────────────────────────────────────── */
+header{display:flex; align-items:center; gap:6px; padding:calc(var(--safe-t) + 7px) 8px 7px;
+  background:var(--sidebar); border-bottom:1px solid var(--border); position:relative; z-index:5}
+header .titulo{font-weight:600; font-size:14.5px; flex:1; min-width:0; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis}
+header .titulo small{display:block; font-weight:400; color:var(--muted-fg); font-size:11px; letter-spacing:.2px}
+button{font:inherit; color:var(--fg); background:var(--muted); border:1px solid var(--border);
+  border-radius:var(--raio); padding:8px 11px; min-height:40px; min-width:40px; cursor:pointer}
+button:active{background:var(--elevated)}
+button.icone{padding:0; display:grid; place-items:center; font-size:16px}
+button.primario{background:var(--accent); color:var(--accent-fg); border-color:var(--accent-solid); font-weight:700}
+button.primario:active{background:var(--accent-solid)}
+button:disabled{opacity:.45}
+.ponto{width:8px; height:8px; border-radius:50%; background:var(--muted-fg); flex:none}
+.ponto.on{background:var(--success)} .ponto.err{background:var(--destructive)}
+
+/* ── aviso ────────────────────────────────────────────────────────────────── */
+#banner{display:none; padding:7px 12px; font-size:12.5px; background:#2b2113;
+  color:#e3b341; border-bottom:1px solid var(--warning)}
+#banner.mostra{display:block}
+
+/* ── conversa ─────────────────────────────────────────────────────────────── */
+main{flex:1; overflow-y:auto; overflow-x:hidden; padding:12px 10px 6px}
+.msg{margin:0 0 12px; display:flex; flex-direction:column; gap:3px; max-width:100%}
+.msg .quem{font:600 10.5px/1 var(--sans); color:var(--muted-fg); letter-spacing:.6px;
+  text-transform:uppercase; padding-left:2px}
+.bolha{border:1px solid var(--border); border-radius:var(--raio-g); padding:10px 12px;
+  overflow-wrap:anywhere; word-break:break-word; font-size:15.5px}
+.msg.user{align-items:flex-end}
+.msg.user .bolha{background:var(--user-bubble); border-color:var(--secondary); max-width:90%}
+.msg.ia .bolha{background:var(--bubble)}
+.bolha p{margin:0 0 8px} .bolha p:last-child{margin:0}
+.bolha pre{background:var(--editor); border:1px solid var(--border); border-radius:var(--raio);
+  padding:9px 10px; overflow-x:auto; font:13px/1.5 var(--mono); margin:8px 0}
+.bolha code{background:var(--editor); border:1px solid var(--border); border-radius:var(--raio);
+  padding:1px 4px; font:13px/1.4 var(--mono)}
+.bolha pre code{background:none; border:0; padding:0}
+.bolha a{color:var(--accent)}
+.bolha ul,.bolha ol{margin:6px 0 6px 19px; padding:0}
+.bolha h1,.bolha h2,.bolha h3{margin:10px 0 5px; font-size:1.03em}
+.ferramenta{display:flex; gap:6px; align-items:center; margin:3px 0 5px; font:12px/1.3 var(--mono)}
+.ferramenta .tag{background:var(--muted); border:1px solid var(--border); border-radius:var(--raio);
+  padding:2px 7px; color:var(--muted-fg)}
+.ferramenta .tag.ok{color:var(--success); border-color:#16443f}
+.pensando{color:var(--muted-fg); font-size:13px}
+.pensando:after{content:"…"; animation:pontos 1.2s steps(4) infinite}
+@keyframes pontos{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.cursor:after{content:"▍"; color:var(--accent); animation:pisca 1s steps(2) infinite}
+@keyframes pisca{0%,49%{opacity:1}50%,100%{opacity:0}}
+.acoes{display:flex; gap:6px; margin-top:5px; opacity:.9}
+.acoes button{min-height:30px; min-width:auto; padding:3px 9px; font-size:12px; color:var(--muted-fg);
+  background:transparent; border-color:var(--border)}
+.acoes button:active{color:var(--fg); background:var(--muted)}
+.uso{font:11px/1.4 var(--mono); color:var(--muted-fg); margin-top:5px; display:flex; gap:10px; flex-wrap:wrap}
+.vazio{color:var(--muted-fg); text-align:center; padding:32px 14px; font-size:14px}
+.anexo{max-width:100%; border-radius:var(--raio); border:1px solid var(--border); margin:6px 0}
+
+/* ── composer ─────────────────────────────────────────────────────────────── */
+footer{background:var(--sidebar); border-top:1px solid var(--border);
+  padding:7px 9px calc(var(--safe-b) + 7px)}
+#chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px}
+#chips .chip{background:var(--muted); border:1px solid var(--border); border-radius:var(--raio);
+  padding:3px 8px; font:12px/1.4 var(--mono); display:flex; gap:6px; align-items:center; color:var(--muted-fg)}
+#chips .chip button{min-height:auto; min-width:auto; padding:0 3px; border:0; background:none; font-size:14px}
+.linha{display:flex; gap:6px; align-items:flex-end}
+textarea{flex:1; resize:none; max-height:34vh; min-height:44px; padding:10px 11px;
+  background:var(--muted); color:var(--fg); border:1px solid var(--border);
+  border-radius:var(--raio); font:15.5px/1.45 var(--sans)}
+textarea::placeholder{color:var(--muted-fg)}
+textarea:focus{outline:none; border-color:var(--accent)}
+#rodapeInfo{font:11px/1.4 var(--mono); color:var(--muted-fg); margin-top:5px;
+  display:flex; gap:10px; justify-content:space-between; flex-wrap:wrap}
+
+/* ── gaveta de conversas ──────────────────────────────────────────────────── */
+#gaveta{position:fixed; inset:0; background:rgba(1,4,9,.72); display:none; z-index:20}
+#gaveta.aberta{display:block}
+#gaveta .painel{position:absolute; top:0; bottom:0; left:0; width:min(86vw,340px);
+  background:var(--sidebar); border-right:1px solid var(--border); display:flex; flex-direction:column;
+  padding-top:var(--safe-t)}
+#gaveta h2{font-size:11.5px; margin:13px 12px 6px; color:var(--muted-fg); font-weight:700;
+  letter-spacing:.7px; text-transform:uppercase}
+#lista{overflow-y:auto; flex:1; padding:0 6px calc(var(--safe-b) + 10px)}
+.item{padding:9px 9px; border-radius:var(--raio); border:1px solid transparent; cursor:pointer}
+.item:active{background:var(--elevated)}
+.item.atual{border-color:var(--secondary); background:var(--accent-soft)}
+.item .t{font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.item .s{font:11px/1.35 var(--mono); color:var(--muted-fg); margin-top:2px; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<header>
+  <button class="icone" id="btMenu" aria-label="Conversas">☰</button>
+  <div class="titulo" id="titulo">Hermes<small id="sub">conectando…</small></div>
+  <span class="ponto" id="ponto"></span>
+  <button class="icone" id="btNovo" aria-label="Nova conversa">＋</button>
+</header>
+
+<div id="banner"></div>
+
+<main id="main"><div class="vazio" id="vazio">Conectando ao Hermes…</div></main>
+
+<footer>
+  <div id="chips"></div>
+  <div class="linha">
+    <button class="icone" id="btAnexo" aria-label="Anexar imagem">📎</button>
+    <textarea id="txt" rows="1" placeholder="Fale com o Hermes…"></textarea>
+    <button class="icone primario" id="btEnviar" aria-label="Enviar">➤</button>
+  </div>
+  <div id="rodapeInfo"><span id="infoModelo">—</span><span id="infoUso"></span></div>
+</footer>
+
+<div id="gaveta"><div class="painel">
+  <h2>Conversas</h2>
+  <div id="lista"></div>
+</div></div>
+
+<input type="file" id="arquivo" accept="image/*" hidden>
+<script src="app.js"></script>
+</body>
+</html>

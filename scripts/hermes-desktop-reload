@@ -1,0 +1,19 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-desktop-reload — recarrega a UI do desktop portada (8890) de forma confiável.
+#
+# Por que existe: `am start -a VIEW -d <mesma url>` numa aba JÁ ABERTA só foca a aba
+# no Chrome, sem recarregar a página — então minhas correções não apareciam.
+# A URL com `?v=<timestamp>` é diferente a cada chamada, o que força carga nova.
+#
+# Uso: hermes-desktop-reload [porta]   (padrão 8890)
+set -u
+PORTA="${1:-8890}"
+URL="http://127.0.0.1:${PORTA}/?v=$(date +%s)"
+if ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:${PORTA}/__health"; then
+  echo "servidor ${PORTA} fora do ar — subindo…"
+  bash "$HOME/.hermes/bin/hermes-desktop-up" >/dev/null 2>&1 || true
+  sleep 2
+fi
+am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1 \
+  && echo "recarregando ${URL}" \
+  || echo "falhou: o Android bloqueia abrir app em segundo plano (traga o Termux pra frente)"

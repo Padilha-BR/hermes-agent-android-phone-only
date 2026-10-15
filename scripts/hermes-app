@@ -1,0 +1,15 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-app — garante que o APP do Hermes (dashboard, porta 9119) esteja no ar.
+# O app é o lado "clicável" do Hermes no celular (icone Hermes na tela inicial).
+URL="http://127.0.0.1:9119"
+
+"$HOME/.hermes/scripts/dashboard-up.sh"
+H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL/api/health" 2>/dev/null)
+if [ "$H" = "200" ]; then
+  echo "App do Hermes: NO AR."
+  echo "Toque no icone 'Hermes' da tela inicial (ou abra $URL)."
+  termux-open-url "$URL" >/dev/null 2>&1 &
+else
+  echo "App do Hermes: NAO subiu (health=$H). Veja ~/.hermes/logs/dashboard.log"
+  exit 1
+fi

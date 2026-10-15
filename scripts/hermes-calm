@@ -1,0 +1,11 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-calm — deixa o celular utilizável quando um build pesado dispara.
+# Baixa a prioridade de CPU dos compiladores (rustc/cargo/maturin) sem matar nada.
+n=0
+for name in rustc cargo maturin clang cc1; do
+  for p in $(ps -eo pid,comm 2>/dev/null | awk -v n="$name" '$2 == n {print $1}'); do
+    renice -n 19 -p "$p" >/dev/null 2>&1 && n=$((n + 1))
+  done
+done
+echo "prioridade baixada em $n processos de build"
+free -m 2>/dev/null | awk 'NR==2 {printf "memoria: %s MB disponiveis\n", $4+$6}'

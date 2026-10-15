@@ -1,0 +1,55 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-imagem — escolher foto do celular com miniatura (popup igual app) e
+# mandar direto pro Hermes, já com a imagem anexada.
+PORT="${HERMES_PICKER_PORT:-8898}"
+URL="http://127.0.0.1:$PORT"
+H="$HOME/.hermes"
+QUEUE="$H/state/picker-queue.json"
+LOG="$H/logs/picker.log"
+mkdir -p "$H/state" "$H/logs"
+
+up() { curl -s -o /dev/null --max-time 3 "$URL/health"; }
+
+if ! up; then
+  setsid nohup "$H/bin/hermes-picker.py" >>"$LOG" 2>&1 </dev/null &
+  for _ in $(seq 1 15); do sleep 1; up && break; done
+fi
+if ! up; then
+  echo "Nao consegui subir o seletor de fotos. Veja $LOG"
+  exit 1
+fi
+
+# limpa escolha anterior
+python -c "import os;p=os.path.expanduser('$QUEUE');os.path.exists(p) and os.remove(p)" 2>/dev/null
+
+am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+echo "Abri o seletor de fotos no navegador."
+echo "Toque nas fotos, escreva a pergunta (opcional) e toque em 'Mandar (N)'."
+echo "Aguardando sua escolha..."
+
+for _ in $(seq 1 300); do
+  [ -f "$QUEUE" ] && break
+  sleep 2
+done
+
+if [ ! -f "$QUEUE" ]; then
+  echo "Nenhuma foto escolhida (desisti depois de 10 min). Rode 'hermes-imagem' de novo quando quiser."
+  exit 1
+fi
+
+IMG=$(python -c "import json;d=json.load(open('$QUEUE'));print(d['paths'][0] if d.get('paths') else '')" 2>/dev/null)
+PERGUNTA=$(python -c "import json;d=json.load(open('$QUEUE'));print(d.get('question','').strip())" 2>/dev/null)
+EXTRAS=$(python -c "import json;d=json.load(open('$QUEUE'));print(', '.join(d['paths'][1:]))" 2>/dev/null)
+python -c "import os;p='$QUEUE';os.path.exists(p) and os.remove(p)" 2>/dev/null
+
+if [ -z "$IMG" ]; then
+  echo "A escolha chegou vazia. Tente de novo."
+  exit 1
+fi
+
+[ -z "$PERGUNTA" ] && PERGUNTA="Olha essa imagem que eu mandei do celular e me diz o que você vê."
+[ -n "$EXTRAS" ] && PERGUNTA="$PERGUNTA (Também escolhi estas outras imagens, leia cada uma: $EXTRAS)"
+
+echo "Foto: $IMG"
+echo "───────────────────────────────────────────────"
+exec hermes-mobile chat -q "$PERGUNTA" --image "$IMG"

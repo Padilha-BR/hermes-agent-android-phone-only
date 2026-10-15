@@ -1,0 +1,38 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-desktop-zoom — escolhe o TAMANHO do texto da UI do desktop portada (8890).
+#
+# A UI do desktop é feita pra janela larga. Servindo numa viewport larga (width=N) o
+# Chrome encolhe tudo pra caber: quanto MAIOR o N, menor o texto na tela (e mais
+# "de desktop" o layout fica). O app exige no mínimo 640px pra manter a barra
+# lateral na grade (SIDEBAR_DOCK_MIN_WIDTH_PX) — abaixo disso ela vira overlay.
+#
+# Uso: hermes-desktop-zoom            → mostra o valor atual
+#      hermes-desktop-zoom 1000       → aplica 1000 e recarrega a tela
+set -u
+H="$HOME/.hermes"
+ARQ="$H/state/desktop-web-viewport"
+ATUAL="$(cat "$ARQ" 2>/dev/null || echo 1180)"
+
+if [ $# -eq 0 ]; then
+  echo "tamanho atual: ${ATUAL}px de viewport (menor = texto maior)"
+  echo "sugestões: 1180 (layout completo, texto pequeno) · 1000 · 860 · 720 (texto maior)"
+  exit 0
+fi
+
+NOVO="$1"
+case "$NOVO" in
+  *[!0-9]*|"") echo "uso: hermes-desktop-zoom [largura em px]"; exit 1 ;;
+esac
+if [ "$NOVO" -lt 660 ]; then
+  echo "aviso: abaixo de 640px o app colapsa a barra lateral em overlay. Use 660+."
+fi
+mkdir -p "$H/state"
+printf '%s' "$NOVO" > "$ARQ"
+echo "viewport: ${ATUAL} → ${NOVO} (recarregando…)"
+# reinicia o servidor com o novo valor e força uma carga nova
+for pid in $(ps -eo pid,args 2>/dev/null | awk '/hermes-desktop-web.py/ && !/awk/ {print $1}'); do kill "$pid" 2>/dev/null; done
+sleep 2
+HERMES_WEB_VIEWPORT_WIDTH="$NOVO" bash "$H/bin/hermes-desktop-up" >/dev/null 2>&1
+sleep 1
+echo "no ar: $(curl -s --max-time 5 "http://127.0.0.1:8890/__health" || echo falhou)"
+echo "agora recarregue a aba (ou toque na notificação do Hermes) para ver o novo tamanho."

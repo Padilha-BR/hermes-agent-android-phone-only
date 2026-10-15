@@ -1,0 +1,9 @@
+# Termux state, logs, caches and anything secret
+.env
+*.log
+state/
+cache/
+__pycache__/
+*.pyc
+node_modules/
+dist/

@@ -1,0 +1,22 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-falar — ditado: usa o reconhecimento de voz do proprio Android (de graca,
+# sem API) e manda o texto pro Hermes. Feito pra usar sem digitar nada.
+# Precisa do pacote termux-api + app Termux:API + app Google instalados.
+
+echo "Fale agora (a janela do microfone vai abrir)..."
+TXT=$(termux-speech-to-text 2>/dev/null)
+if [ -z "$TXT" ]; then
+  echo "Nao entendi nada. Tente de novo: hermes-falar"
+  exit 1
+fi
+
+echo "Voce disse: $TXT"
+echo "───────────────────────────────────────────────"
+
+if [ -t 0 ]; then
+  exec hermes-mobile -z "$TXT"
+else
+  hermes-mobile -z "$TXT"
+  printf "\n(toque Enter para fechar)\n"
+  read -r _
+fi
