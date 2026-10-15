@@ -67,7 +67,7 @@ Detail, links and what each one does differently: **[docs/00-prior-art.md](docs/
 | Native chat surface up | `GET :8891/` → 200 |
 | Dashboard healthy, no auth gate on loopback | `GET :9119/api/health` → `{"ok":true,"auth_required":false}` |
 | Dashboard is a real PWA | `GET :9119/manifest.webmanifest` → `200 application/manifest+json` |
-| Generated bridge surface | `shim-stubs.js` → 9,685 bytes, 160 keys from `global.d.ts` |
+| Generated bridge surface | `shim-stubs.js` → 9,688 bytes, 160 keys from `global.d.ts` |
 | Watchdog survives the agent session | `dashboard-watchdog.pid` → `PPid: 1` (detached, not a child of the agent) |
 | Bundle intact after build | `apps/desktop/dist` → 1,044 asset entries, 147 refs in `index.html` |
 

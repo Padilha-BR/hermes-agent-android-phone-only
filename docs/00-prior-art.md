@@ -62,7 +62,7 @@ Serve de referência de **qualidade de documentação** para este tipo de projet
    do telefone. Todos os ports que achamos põem algo entre o telefone e a UI.
 2. **Ponte gerada do contrato de tipos, não escrita à mão.** `apps/desktop/src/global.d.ts` →
    [`gerar-shim-stubs.py`](../scripts/gerar-shim-stubs.py) → `shim-stubs.js` com **160 chaves
-   inertes** (medido hoje: 9.685 bytes), sobre as quais o shim real implementa o que importa.
+   inertes** (medido hoje: 9.688 bytes), sobre as quais o shim real implementa o que importa.
    Escrever a ponte à mão gerava *um erro novo por rodada*; gerar a superfície do contrato fechou
    o buraco de uma vez.
 3. **O dashboard oficial como PWA instalável na tela inicial, no Termux**, com watchdog e

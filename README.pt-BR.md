@@ -67,7 +67,7 @@ Detalhe, links e o que cada um faz de diferente: **[docs/00-prior-art.md](docs/0
 | Superfície de chat nativa no ar | `GET :8891/` → 200 |
 | Dashboard saudável, sem login em loopback | `GET :9119/api/health` → `{"ok":true,"auth_required":false}` |
 | Dashboard é PWA de verdade | `GET :9119/manifest.webmanifest` → `200 application/manifest+json` |
-| Superfície da ponte gerada | `shim-stubs.js` → 9.685 bytes, 160 chaves vindas do `global.d.ts` |
+| Superfície da ponte gerada | `shim-stubs.js` → 9.688 bytes, 160 chaves vindas do `global.d.ts` |
 | Watchdog sobrevive à sessão do agente | `dashboard-watchdog.pid` → `PPid: 1` (desgarrado, não é filho do agente) |
 | Bundle íntegro depois do build | `apps/desktop/dist` → 1.044 entradas em `assets`, 147 refs no `index.html` |
 
