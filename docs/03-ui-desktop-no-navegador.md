@@ -224,8 +224,11 @@ você a serve. Estes cinco pontos foram medidos, não deduzidos:
   segundo plano tem o JS **congelado**: o servidor entrega, a página não executa.
   Se a telemetria parou, é a aba, não o código — peça UM toque de recarga ao
   usuário em vez de repetir tentativas.
-- **Canal de operação `/__cmd?js=<urlencoded>`** (SSE → `eval` → resultado no log)
-  permite clicar e ler a página daqui. Armadilha: **não esvazie a fila ao
+- **Canal de operação `/__cmd?js=<urlencoded>&token=<CMD_TOKEN>`** (SSE → `eval` → resultado no log)
+  permite clicar e ler a página daqui. O token sai da env `HERMES_DESKTOP_CMD_TOKEN`, do arquivo
+  `~/.hermes/state/desktop-cmd-token` (chmod 600) ou é aleatório por processo e aparece no log de
+  startup; **sem token a resposta é 403** — sem isso qualquer página aberta no navegador
+  dispara o canal por GET (CSRF), porque o loopback não tem CORS. Armadilha: **não esvazie a fila ao
   entregar** — uma conexão SSE morta de uma carga antiga fica na lista, "come" o
   comando e a página viva nunca recebe. Entregue a fila inteira a cada conexão e
   deixe a página descartar ids repetidos.

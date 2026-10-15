@@ -21,6 +21,14 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 > o token do HTML **é** o login, e não existe segundo fator. Se precisar de acesso remoto, use
 > túnel/autenticação de verdade na frente, nunca este servidor.
 
+> 🔑 **O canal de operação `/__cmd` exige token** (executa JS arbitrário na página aberta, que
+> carrega o token da sessão). Ordem de resolução: env `HERMES_DESKTOP_CMD_TOKEN` → arquivo
+> `~/.hermes/state/desktop-cmd-token` (chmod 600) → aleatório por processo, impresso no log de
+> startup. Então: `curl -s -G 'http://127.0.0.1:8890/__cmd' --data-urlencode "js=<expr>"
+> --data-urlencode "token=$(cat ~/.hermes/state/desktop-cmd-token)"`. Sem token a resposta é
+> **403**. `HERMES_DESKTOP_CMD_INSECURE=1` volta ao comportamento antigo — não use com a porta
+> aberta para o resto do aparelho.
+
 ## Superfícies (subir e manter de pé)
 
 | Arquivo | O que faz |

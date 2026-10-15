@@ -12,10 +12,17 @@ bad(){ printf '  \033[31m✗\033[0m %s\n' "$1"; }
 echo "=== Hermes no celular — saúde ($(date '+%d/%m/%Y %H:%M')) ==="
 
 # 1. memória dentro do orçamento? (fora do orçamento = não grava memória nova)
+# Os limites REAIS vêm do config.yaml (memory_char_limit / user_char_limit).
+lim_mem=$(sed -n 's/^[[:space:]]*memory_char_limit:[[:space:]]*//p' "$H/config.yaml" 2>/dev/null | head -1)
+lim_usr=$(sed -n 's/^[[:space:]]*user_char_limit:[[:space:]]*//p' "$H/config.yaml" 2>/dev/null | head -1)
 for f in MEMORY.md USER.md; do
-  case $f in MEMORY.md) lim=2200;; USER.md) lim=1375;; esac
-  n=$(wc -c <"$H/memories/$f" 2>/dev/null || echo 0)
-  if [ "$n" -le "$lim" ]; then ok "$f: $n/$lim chars"; else bad "$f: $n/$lim chars — ESTOURADO, memória bloqueada"; fi
+  case $f in MEMORY.md) lim=${lim_mem:-9000};; USER.md) lim=${lim_usr:-4500};; esac
+  lim=${lim//[!0-9]/}; [ -n "$lim" ] || lim=9000
+  n=$(python -c "import sys;print(len(open(sys.argv[1],encoding='utf-8').read()))" "$H/memories/$f" 2>/dev/null || wc -m <"$H/memories/$f" 2>/dev/null || echo 0)
+  n=${n//[!0-9]/}; [ -n "$n" ] || n=0
+  if [ "$n" -gt "$lim" ]; then bad "$f: $n/$lim chars — ESTOURADO, memória bloqueada"
+  elif [ "$n" -gt $(( lim * 9 / 10 )) ]; then warn "$f: $n/$lim chars — perto do teto (>=90%), consolide entradas"
+  else ok "$f: $n/$lim chars"; fi
 done
 
 # 2. skills: quantas entram no prompt de toda mensagem
@@ -59,7 +66,9 @@ if [ "$PRUNE" = "1" ]; then
   find "$H/logs" -maxdepth 1 -type f -name "*.log*" -mtime +7 -delete 2>/dev/null && ok "logs >7 dias apagados"
   for f in agent.log errors.log; do
     if [ -f "$H/logs/$f" ] && [ "$(wc -c <"$H/logs/$f")" -gt 2000000 ]; then
-      tail -c 500000 "$H/logs/$f" > "$H/logs/$f.tmp" && mv "$H/logs/$f.tmp" "$H/logs/$f" && ok "$f rotacionado (>2MB)"
+      # trunca NO LUGAR (não `mv`): o processo que escreve tem o fd aberto e apontaria
+      # pro inode antigo — o log pareceria limpo e o espaço NÃO seria liberado.
+      tail -c 500000 "$H/logs/$f" > "$H/logs/$f.tmp" && cat "$H/logs/$f.tmp" > "$H/logs/$f" && rm -f "$H/logs/$f.tmp" && ok "$f rotacionado no lugar (>2MB)"
     fi
   done
 fi

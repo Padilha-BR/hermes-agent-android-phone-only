@@ -34,7 +34,15 @@ LOG = Path(os.environ.get("HERMES_WEB_LOG", str(HERMES_HOME / "logs" / "desktop-
 # HERMES_DESKTOP_CMD_TOKEN (estável, para scripts) ou um aleatório por processo
 # (impresso no log de startup). HERMES_DESKTOP_CMD_INSECURE=1 volta ao
 # comportamento antigo, para quem só opera localmente.
-CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or uuid.uuid4().hex
+def _ler_token_arquivo() -> str:
+    try:
+        return (HERMES_HOME / "state" / "desktop-cmd-token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or _ler_token_arquivo()
+CMD_TOKEN_ORIGEM = "env" if os.environ.get("HERMES_DESKTOP_CMD_TOKEN") else ("arquivo 0600" if CMD_TOKEN else "aleatorio")
+if not CMD_TOKEN:
+    CMD_TOKEN = uuid.uuid4().hex
 CMD_INSEGURO = os.environ.get("HERMES_DESKTOP_CMD_INSECURE", "") == "1"
 LAST_TOKEN = ""  # último token lido do backend, só para redigir no log
 VERSION = str(time.time())  # muda a cada correção → a página aberta recarrega sozinha
@@ -545,8 +553,12 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     log(f"servindo {BUNDLE} em http://127.0.0.1:{PORT} (backend {BACKEND})")
     if not CMD_INSEGURO:
-        log(f"/__cmd exige token={CMD_TOKEN} (HERMES_DESKTOP_CMD_TOKEN fixa a env; "
-            f"HERMES_DESKTOP_CMD_INSECURE=1 desliga a checagem)")
+        if CMD_TOKEN_ORIGEM == "aleatorio":
+            log(f"/__cmd exige token={CMD_TOKEN} (defina HERMES_DESKTOP_CMD_TOKEN ou crie "
+                f"state/desktop-cmd-token com chmod 600 para fixar)")
+        else:
+            log(f"/__cmd exige token lido de {CMD_TOKEN_ORIGEM} (state/desktop-cmd-token); "
+                f"HERMES_DESKTOP_CMD_INSECURE=1 desliga a checagem")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 
