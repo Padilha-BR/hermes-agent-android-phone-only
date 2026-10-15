@@ -51,7 +51,14 @@ for pid in $(pgrep -f hermes-desktop-web.py 2>/dev/null); do
   fi
   porta=$(printf '%s\n' "$envs" | sed -n 's/^HERMES_DESKTOP_WEB_PORT=//p')
   case "$porta" in
-    ""|8890) kill "$pid" 2>/dev/null && mortos=$((mortos+1)) ;;
+    ""|8890)
+      # ZOOM_DRY=1 imprime em vez de matar — é como testar esta classificação sem
+      # derrubar a superfície que o usuário está usando (o pgrep casa fácil demais).
+      if [ "${ZOOM_DRY:-0}" = "1" ]; then
+        echo "  [dry-run] mataria pid $pid (porta ${porta:-8890})"
+      else
+        kill "$pid" 2>/dev/null && mortos=$((mortos+1))
+      fi ;;
   esac
 done
 echo "servidor(es) do desktop reiniciado(s): $mortos (chat 8891 preservado)"
