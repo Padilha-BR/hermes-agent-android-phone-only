@@ -12,7 +12,9 @@ bad(){ printf '  \033[31m✗\033[0m %s\n' "$1"; }
 echo "=== Hermes no celular — saúde ($(date '+%d/%m/%Y %H:%M')) ==="
 
 # 1. memória dentro do orçamento? (fora do orçamento = não grava memória nova)
-# Os limites REAIS vêm do config.yaml (memory_char_limit / user_char_limit).
+# Os limites REAIS vêm do config.yaml (memory_char_limit / user_char_limit). Antes
+# estavam chumbados em 2200/1375 e o script dava alarme falso todo dia dizendo que
+# a memória estava bloqueada quando não estava.
 lim_mem=$(sed -n 's/^[[:space:]]*memory_char_limit:[[:space:]]*//p' "$H/config.yaml" 2>/dev/null | head -1)
 lim_usr=$(sed -n 's/^[[:space:]]*user_char_limit:[[:space:]]*//p' "$H/config.yaml" 2>/dev/null | head -1)
 for f in MEMORY.md USER.md; do
@@ -46,7 +48,7 @@ else warn "watchdog parado — suba: setsid $H/scripts/dashboard-watchdog.sh &";
 
 # 4. wake lock (sem ele o Android congela o Termux e o app morre)
 # O lock pertence ao APP Termux (não conta tomadas) e não tem comando de status
-# confável em toda versão do Termux:API — então aqui só mostramos a presença.
+# confiável em toda versão do Termux:API — então aqui só mostramos a presença.
 # Quem segura (e devolve no trap de saída) é o dashboard-watchdog.
 if command -v termux-wake-lock >/dev/null 2>&1; then
   ok "termux-wake-lock instalado (segurado pelo watchdog enquanto ele rodar)"
