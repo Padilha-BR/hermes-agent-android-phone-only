@@ -1,14 +1,14 @@
 # Hermes Agent on Android — phone-only, with the desktop UI running in the phone's own browser
 
-Field report by **[Gabriel Padilha](https://github.com/Padilha-BR)**, **2026-10-14**. Galaxy S24 Ultra (SM-S928B, Android 16 / API 36, One UI 8, arm64,
-12 GB RAM), Termux, Python 3.14.6,
+Field report by **[Gabriel Padilha](https://github.com/Padilha-BR)**, **2026-10-14** — updated **2026-10-16**.
+Galaxy S24 Ultra (SM-S928B, arm64, 12 GB RAM), firmware `S928BXXU6EZIF`, Termux, Python 3.14.6,
 Hermes Agent `git.311155f.dirty`.
+Measured on **Android 16 / API 36, One UI 8** (2026-10-14) and re-checked on **Android 17 / API 37** (2026-10-16).
 
 **Português:** [leia em português](README.pt-BR.md).
 
 **One line:** Hermes Agent runs entirely inside Termux on the phone — CLI, dashboard, *and the official
-desktop app's own React renderer*, served to the phone's browser by the phone itself. No PC, no VM,
-no Docker, no Tailscale, no second machine anywhere in the loop. The dashboard is pinned to the home
+desktop app's own React renderer*, served to the phone's browser by the phone itself. The phone is both host and client, with no second machine anywhere in the loop — no container host, no tunnel, nothing else in it. The dashboard is pinned to the home
 screen as an installable PWA, and a watchdog keeps it alive when Android suspends Termux.
 
 > ⚠️ **It works, but it's a workaround — not an app.** There is no APK here and this is not a
@@ -41,9 +41,9 @@ Detail, links and what each one does differently: **[docs/00-prior-art.md](docs/
 ## What we could not find published anywhere
 
 1. **The official desktop renderer running in the phone's own browser, hosted by the phone.**
-   Every published port of `apps/desktop` puts a server, container or VM between the phone and the UI.
+   Every published port of `apps/desktop` puts some host between the phone and the UI.
    Here the phone is both host *and* client, entirely inside Termux on loopback
-   (`http://127.0.0.1:8890`), with no VM and no Debian layer.
+   (`http://127.0.0.1:8890`), with no layer in between at all.
 2. **A generated Electron-bridge shim.** Instead of hand-writing `window.hermesDesktop` method by
    method, we generate the whole bridge surface from the renderer's own type contract
    (`apps/desktop/src/global.d.ts`) into a 160-key inert stub base
@@ -81,7 +81,7 @@ which is what makes the text readable and keeps the composer inside the visible 
 
 ```
 Termux on the phone
-├─ hermes CLI (venv, Python 3.14, Termux main repo — no TUR, no VM)
+├─ hermes CLI (venv, Python 3.14, Termux main repo — no TUR, no container layer)
 ├─ :9119  hermes dashboard      → official web dashboard, patched into an installable PWA
 ├─ :8890  desktop-ui/web         → apps/desktop React renderer + generated bridge shim
 ├─ :8891  native chat            → SPA speaking the gateway's JSON-RPC/WebSocket protocol
@@ -94,6 +94,27 @@ To measure a **service worker** you need a browser that stays alive between comm
 `scripts/cdp-atual.py nav-js <url> '<expr>'` drives the Chromium already running on 9222 with a
 persistent profile. `webcdp` cannot do it — it launches and kills a Chromium per call, so the
 worker never gets to install, and its `Runtime.evaluate` returns `{}` for any Promise.
+
+## Not a chat window: the agent writes and runs code on the phone
+
+Running the agent *on* the device is a different thing from talking to a host from the device. Here the
+agent writes and runs its own code locally — Python 3.14.6, Node 26.4.0 and bash 5.3.20 are in the
+phone, and nothing is executed anywhere else.
+
+Every script in [`scripts/`](scripts/) was written by the agent, on the phone, while doing this work.
+Several of them exist because generating beat hand-writing:
+
+| Script | What it does | Why it exists |
+|---|---|---|
+| [`gerar-shim-stubs.py`](scripts/gerar-shim-stubs.py) | reads `apps/desktop/src/global.d.ts` and emits the whole `window.hermesDesktop` surface as 160 inert keys | hunting missing methods one by one was slow and fragile — every absent `on*` returned a Promise instead of a canceler and took the UI down |
+| [`medir-ui-port.py`](scripts/medir-ui-port.py), [`medir-texto-port.py`](scripts/medir-texto-port.py) | measure layout, and the actual message text at each scale, in a headless Chromium emulating the phone | "it looks fine" is not a measurement |
+| [`cdp-atual.py`](scripts/cdp-atual.py) | drives the Chromium already running on :9222 | a service worker can only be tested with a browser that stays alive between commands |
+| [`testar-ponte-port.py`](scripts/testar-ponte-port.py), [`testar-anexos-port.py`](scripts/testar-anexos-port.py), [`teste-divisor-port.py`](scripts/teste-divisor-port.py) | prove the bridge fixes by *effect*: click for real, read the clipboard back, count `pointercancel` | a `cancel` that fires at once passes a naive test while the UI is still broken |
+| [`validar-injecao.py`](scripts/validar-injecao.py), [`verify-native-chat.py`](scripts/verify-native-chat.py) | assert what a surface actually serves, over the gateway's WebSocket | an icon can be alive and serving the wrong thing |
+
+The same pattern produced the tools in the [sibling repo](https://github.com/Padilha-BR/docker-termux)
+(`webget`, `webprint`, `webplay`, `pdf`). The numbers in this README were queried on the device while it
+was being written — they were not recalled from an earlier session.
 
 ## Footprint on the phone
 
@@ -197,6 +218,24 @@ Docs are in Portuguese (they are our working notes); this README and doc 00's ta
   app only a secret helps — which is why those two tokens exist; the session token in the HTML is
   still readable by anything that can load the page, so treat the phone itself as the boundary.
 
+## Android 17 (2026-10-16): what the upgrade changed
+
+The device moved from Android 16 / API 36 to **Android 17 / API 37** on 2026-10-16. Two things are worth
+knowing before you blame your own setup:
+
+- **`termux-exec` stopped rewriting the `/usr/bin/env` shebang.** A script whose first line is
+  `#!/usr/bin/env …` now dies with `bad interpreter: No such file or directory`. It hides well: a
+  launcher that only checks the file exists keeps passing. The workaround is to call the script through
+  `sys.executable`, or to point the shebang at `$PREFIX/bin/env` — the sibling repo's installer does
+  the latter, idempotently, for the udocker binary.
+- **The app can be opened before the surfaces exist.** `Termux:Boot` runs on Android's schedule, not the
+  app's, so tapping the home-screen icon right after a reboot used to give a black screen. The service
+  worker now answers navigation with a rescue page ("Acordando o Hermes" — waking Hermes) and reloads
+  itself the moment `/__health` responds: same tab, no touch.
+
+The install path, the four ports, the PWA patch and the watchdog all survived the upgrade, and the
+surface checks in this README were re-run on Android 17 — 8890, 8891, 9119 and 9222 all answered 200.
+
 ## Honest limitations
 
 - **Android is not a server.** Termux gets suspended; battery optimisation must be disabled by hand
@@ -225,5 +264,10 @@ Docs are in Portuguese (they are our working notes); this README and doc 00's ta
 Hermes Agent is [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) (MIT).
 Termux is [termux/termux-app](https://github.com/termux/termux-app). The desktop-web ports and the
 field reports listed in doc 00 are the shoulders this stands on.
+
+Two PRs against upstream are open, waiting on review: a from-source Termux install fallback
+([#138739](https://github.com/NousResearch/hermes-agent/pull/138739)) and the Android browser/CDP setup
+docs ([#139402](https://github.com/NousResearch/hermes-agent/pull/139402)). The scripts here are ours
+either way — unversioned against upstream internals, which upstream can move.
 
 MIT — see [LICENSE](LICENSE).
