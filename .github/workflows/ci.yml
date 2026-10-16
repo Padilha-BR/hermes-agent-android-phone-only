@@ -1,0 +1,61 @@
+name: ci
+
+# Checagens estáticas dos scripts que rodam no telefone. Não há como rodar o
+# Termux/Android aqui: isto pega erro de sintaxe e os avisos do shellcheck antes
+# de chegarem no aparelho — o comportamento continua sendo testado no celular.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checagens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: shell — bash -n e shellcheck -S warning
+        run: |
+          set -euo pipefail
+          # shell = .sh ou qualquer arquivo versionado com shebang de shell (os
+          # comandos em scripts/ não têm extensão; os atalhos têm espaço no nome)
+          mapfile -d '' arquivos < <(git ls-files -z)
+          shells=()
+          for f in "${arquivos[@]}"; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.sh) shells+=("$f") ;;
+              *.*) ;;
+              *) head -n1 "$f" | grep -qE '^#!.*\b(ba)?sh\b' && shells+=("$f") ;;
+            esac
+          done
+          printf 'shell: %s\n' "${shells[@]}"
+          for f in "${shells[@]}"; do bash -n "$f"; done
+          shellcheck --version | head -2
+          shellcheck -S warning "${shells[@]}"
+
+      - name: python — py_compile
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.py' | xargs -0 -r python -m py_compile
+          git ls-files '*.py'
+
+      - name: javascript — node --check
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.js' '*.mjs' | xargs -0 -r -n1 node --check
+          git ls-files '*.js' '*.mjs'
+
+      - name: injeção do desktop-web — template formata e o JS passa no node --check
+        run: python scripts/validar-injecao.py scripts/hermes-desktop-web.py
