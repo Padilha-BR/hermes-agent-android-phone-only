@@ -46,7 +46,7 @@ Implementado:
 - a miniatura vem de `GET /__file?path=…`, que **exige o token da sessão** e só aceita caminho dentro
   de `$HOME` (travessia testada: `/etc/passwd` → **403**).
 
-Três armadilhas que custaram rodadas:
+Armadilhas que custaram rodadas:
 
 1. **O `cancel` do input dispara na hora num teste headless** — não existe diálogo para o usuário
    cancelar. Sem interceptar o seletor (`Page.setInterceptFileChooserDialog` +
@@ -56,6 +56,19 @@ Três armadilhas que custaram rodadas:
    janela volta ao foco **sem exigir que ela tenha perdido o foco antes** derruba a escolha com o
    seletor ainda aberto. Tem de exigir `blur` primeiro.
 3. Um clique **duplo** em item de menu Radix abre e fecha o menu. Clique uma vez.
+4. **`os.link` não existe no Python do Android — e o erro não é `OSError`.** A publicação atômica do
+   anexo (gravar num `.tmp` e publicar sem sobrescrever) usava `os.link` para não abrir janela de
+   corrida; no Termux `hasattr(os, "link")` é **False** (o bionic não expõe `link()`), então a rota
+   morria com `AttributeError` — que `except OSError` **não** pega. Efeito medido: o seletor abria, a
+   foto era escolhida e nada mais acontecia — o servidor fechava a conexão sem resposta, o navegador
+   via `ERR_EMPTY_RESPONSE` e a tela não mostrava nada. Correção: publicar sem hard link com
+   **`O_EXCL|O_CREAT`** (reserva o nome, não sobrescreve) + `os.replace` (publica o conteúdo de uma
+   vez), e usar `os.link` só sob `hasattr(os, "link")`. Regressão: o anexo funcionava antes do commit
+   que trouxe a gravação atômica (`dc559c4`), e ficou quebrado em silêncio até a auditoria.
+5. **Rota que estoura sem responder.** O handler morria antes de qualquer resposta, então nem o log
+   do injetor nem a tela registravam a falha. Agora todo `do_POST`/`do_GET` passa por um guard que
+   grava o traceback e devolve **500 JSON**: a ponte loga o motivo (`nao salvei o anexo (500) …`) e o
+   usuário recebe notificação do sistema quando a página tem permissão.
 
 ## 2. Escolher pasta (e o que isso destrava)
 

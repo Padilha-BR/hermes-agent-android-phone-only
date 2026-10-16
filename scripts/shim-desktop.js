@@ -250,6 +250,22 @@
     return { canceled: !dir, dir: dir || null };
   }
 
+  // Aviso visivel para falha de anexo: notificacao do sistema quando a pagina
+  // tem permissao, e — sempre — o erro tambem vai para o log do injetor.
+  function avisarAnexoFalhou(msg) {
+    try {
+      if (typeof Notification === 'function' && Notification.permission === 'granted') {
+        new Notification('Anexo nao chegou', { body: String(msg).slice(0, 180) });
+        return;
+      }
+      if (typeof Notification === 'function' && Notification.permission === 'default') {
+        Notification.requestPermission().then((p) => {
+          if (p === 'granted') new Notification('Anexo nao chegou', { body: String(msg).slice(0, 180) });
+        }).catch(() => {});
+      }
+    } catch (e) { /* sem permissao: o log ja registrou */ }
+  }
+
   function escolherArquivos(opcoes) {
     const o = opcoes || {};
     // Pasta tem caminho próprio; pasta de ARQUIVOS não (ver escolherPasta).
@@ -282,7 +298,14 @@
         const caminhos = [];
         for (const f of escolhidos) {
           try { caminhos.push(await enviarArquivo(f)); }
-          catch (e) { log('anexo falhou: ' + ((e && e.message) || e)); }
+          catch (e) {
+            // Falha de anexo NAO pode ser silenciosa: sem aviso o usuario ve o
+            // seletor abrir, escolhe a foto e nada acontecer — foi exatamente o
+            // que aconteceu quando /__upload morria com AttributeError.
+            const msg = (e && e.message) || String(e);
+            log('anexo falhou: ' + msg);
+            avisarAnexoFalhou(msg);
+          }
         }
         terminar(caminhos);
       };

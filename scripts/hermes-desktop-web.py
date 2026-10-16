@@ -123,9 +123,9 @@ def _criar_token_arquivo() -> str:
     """Gera o segredo e grava com 0600 já na criação (sem janela de leitura).
 
     8890 e 8891 sobem juntos pelo watchdog: o arquivo só aparece COMPLETO —
-    escrito num temporário 0600 e publicado com os.link (atômico, falha se já
-    existe). Se o link não for permitido (SELinux de algumas versões do Android),
-    cai no O_EXCL + escrita, e quem perde a corrida lê esperando conteúdo."""
+    escrito num temporário 0600 e publicado pelo `publicar_sem_sobrescrever`
+    (atômico, falha se já existe; no Android, sem os.link, a publicação é
+    O_EXCL + replace). Quem perde a corrida lê esperando conteúdo."""
     CMD_ARQ.parent.mkdir(parents=True, exist_ok=True)
     tok = secrets.token_urlsafe(24)
     tmp = CMD_ARQ.with_name(f".{CMD_ARQ.name}.{os.getpid()}.tmp")
@@ -133,25 +133,14 @@ def _criar_token_arquivo() -> str:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(tok)
-        try:
-            os.link(tmp, CMD_ARQ)
+        if publicar_sem_sobrescrever(tmp, CMD_ARQ):
             return tok
-        except FileExistsError:  # o outro servidor (8890 x 8891) publicou primeiro
-            return _ler_token_esperando()
-        except OSError:
-            pass  # sem hard link: segue pelo O_EXCL abaixo
     finally:
         try:
             tmp.unlink()
         except OSError:
             pass
-    try:
-        fd = os.open(str(CMD_ARQ), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return _ler_token_esperando()
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(tok)
-    return tok
+    return _ler_token_esperando()   # o outro servidor (8890 x 8891) publicou primeiro
 
 
 CMD_INSEGURO = os.environ.get("HERMES_DESKTOP_CMD_INSECURE", "") == "1"
@@ -248,6 +237,40 @@ def fetch_token() -> str:
     return ""
 
 
+TEM_LINK = hasattr(os, "link")   # Android/Termux: o CPython do bionic NAO expoe os.link
+
+
+def publicar_sem_sobrescrever(tmp: Path, alvo: Path) -> bool:
+    """Publica `tmp` em `alvo` SEM SOBRESCREVER. True se publicou em `alvo`.
+
+    Dois caminhos, porque `os.link` NAO EXISTE no Python do Android (o bionic
+    nao expoe link()): chamar os.link sem guarda derrubava a rota inteira com
+    AttributeError — o servidor fechava a conexao sem resposta, o navegador via
+    ERR_EMPTY_RESPONSE e o anexo nunca chegava, sem uma linha de erro na tela.
+
+      * com hard link (Linux/PC): os.link falha se o nome existe — exclusivo e
+        atomico, sem janela para outro processo;
+      * sem hard link (Android/Termux): RESERVA o nome com O_EXCL|O_CREAT
+        (exclusivo: falha se ja existe) e preenche com os.replace, que publica
+        o conteudo de uma vez — nenhum leitor ve arquivo pela metade.
+    """
+    if TEM_LINK:
+        try:
+            os.link(str(tmp), str(alvo))
+            os.unlink(str(tmp))
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            pass                                  # FS sem hard link: caminho de baixo
+    try:
+        os.close(os.open(str(alvo), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        return False
+    os.replace(str(tmp), str(alvo))
+    return True
+
+
 def gravar_atomico(destino: Path, dados: bytes, alternativa=None) -> Path:
     """Grava num temporário 0600 do mesmo diretório e só então publica.
 
@@ -257,10 +280,9 @@ def gravar_atomico(destino: Path, dados: bytes, alternativa=None) -> Path:
     o agente como se fosse o arquivo inteiro.
 
     `alternativa` (função que devolve outro Path) liga o modo SEM SOBRESCREVER:
-    publica com os.link, que falha se o nome já existe, e tenta o nome
-    alternativo — dois anexos com o mesmo nome no mesmo segundo não se
-    apagam mais. Sem hard link (SELinux de alguns Androids) cai para o nome
-    alternativo com os.replace. Devolve o caminho publicado."""
+    publica pelo `publicar_sem_sobrescrever`, que falha se o nome já existe e
+    então tenta o nome alternativo — dois anexos com o mesmo nome no mesmo
+    segundo não se apagam mais. Devolve o caminho publicado."""
     tmp = destino.with_name(f".{destino.name}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -271,16 +293,14 @@ def gravar_atomico(destino: Path, dados: bytes, alternativa=None) -> Path:
             return destino
         alvo = destino
         for _ in range(5):
-            try:
-                os.link(tmp, alvo)
+            if publicar_sem_sobrescrever(tmp, alvo):
                 return alvo
-            except FileExistsError:
-                alvo = alternativa()
-            except OSError:
-                alvo = alternativa()
-                os.replace(tmp, alvo)
-                return alvo
-        raise FileExistsError(str(destino))
+            alvo = alternativa()
+        # 5 nomes ocupados: publica por cima do ULTIMO alternativo — perder o
+        # anexo é pior que ganhar um sufixo repetido.
+        alvo = alternativa()
+        os.replace(tmp, alvo)
+        return alvo
     finally:
         try:
             tmp.unlink()
@@ -968,6 +988,31 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── POST ─────────────────────────────────────────────────────────────────
     def do_POST(self) -> None:  # noqa: N802
+        self._com_erro_visivel(self._tratar_POST)
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._com_erro_visivel(self._tratar_GET)
+
+    def _com_erro_visivel(self, rota) -> None:
+        """Uma exceção numa rota NÃO pode morrer em silêncio.
+
+        Sem isto, o `AttributeError` do os.link dentro de /__upload fechava a
+        conexão sem resposta: o navegador só via ERR_EMPTY_RESPONSE, a interface
+        não mostrava nada e o anexo desaparecia sem rastro nenhum."""
+        try:
+            rota()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as exc:
+            import traceback
+            log(f"[erro] {getattr(rota, '__name__', 'rota')}: "
+                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            try:
+                self._json({"ok": False, "erro": f"{type(exc).__name__}: {exc}"}, 500)
+            except Exception:
+                pass
+
+    def _tratar_POST(self) -> None:  # noqa: N802
         if not self._host_ok():
             return self._send(b"host invalido", "text/plain", 403)
         path = urlparse(self.path).path
@@ -1062,7 +1107,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "paginas": n})
 
     # ── GET ──────────────────────────────────────────────────────────────────
-    def do_GET(self) -> None:  # noqa: N802
+    def _tratar_GET(self) -> None:  # noqa: N802
         if not self._host_ok():
             return self._send(b"host invalido", "text/plain", 403)
         path = urlparse(self.path).path
