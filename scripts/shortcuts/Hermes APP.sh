@@ -2,6 +2,8 @@
 # Botão da tela inicial (Termux:Widget): abrir a UI do Hermes que o usuário realmente usa.
 # Antes abria o dashboard (9119, painel de admin — caía na lista de Sessions).
 # Agora: garante o backend/dashboard no ar E abre a UI do desktop portada (8890).
+# O widget NÃO lê o ~/.bashrc: PATH explícito para curl/termux-open-url/hermes.
+export PATH="$HOME/.hermes/bin:$HOME/hermes-agent/venv/bin:/data/data/com.termux/files/usr/bin:$PATH"
 "$HOME/.hermes/scripts/dashboard-up.sh"          # backend que a UI consome
 "$HOME/.hermes/bin/hermes-desktop-up" >/dev/null 2>&1   # sobe a UI portada se estiver fora
 sleep 1

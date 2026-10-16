@@ -55,7 +55,8 @@ if command -v termux-wake-lock >/dev/null 2>&1; then
 else warn "termux-wake-lock não encontrado (instale Termux:API p/ segurar o lock)"; fi
 
 # 5. espaço
-df -h /data 2>/dev/null | awk 'NR==2{gsub(/G/,"",$4); printf "  espaço livre: %s (uso %s)\n", $4"G", $5}'
+# o df já imprime a unidade (512M, 47G): tirar o G e recolocar dava "512MG"
+df -h /data 2>/dev/null | awk 'NR==2{printf "  espaço livre: %s (uso %s)\n", $4, $5}'
 
 # 6. processos pesados acidentais (compilação Rust do gerenciador de plugins)
 comp=$(pgrep -f "cargo/registry|uv/sdists" 2>/dev/null | wc -l)
@@ -66,7 +67,10 @@ sz=$(du -sk "$H/logs" 2>/dev/null | awk '{print $1}')
 ok "logs: $((sz/1024)) MB"
 if [ "$PRUNE" = "1" ]; then
   find "$H/logs" -maxdepth 1 -type f -name "*.log*" -mtime +7 -delete 2>/dev/null && ok "logs >7 dias apagados"
-  for f in agent.log errors.log; do
+  # inclui os logs dos servidores locais: desktop-web.log/chat-telemetria.log giram
+  # sozinhos em 2 MB, mas o stdout dos servidores (>>, sem rotação) crescia sem limite
+  for f in agent.log errors.log desktop-web.log chat-telemetria.log desktop-web-server.log \
+           chat-server.log dashboard.log dashboard-watchdog.log picker.log; do
     if [ -f "$H/logs/$f" ] && [ "$(wc -c <"$H/logs/$f")" -gt 2000000 ]; then
       # trunca NO LUGAR (não `mv`): o processo que escreve tem o fd aberto e apontaria
       # pro inode antigo — o log pareceria limpo e o espaço NÃO seria liberado.

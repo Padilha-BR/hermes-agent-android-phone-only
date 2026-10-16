@@ -11,7 +11,8 @@
 set -u
 H="$HOME/.hermes"
 ARQ="$H/state/desktop-web-viewport"
-ATUAL="$(cat "$ARQ" 2>/dev/null || echo 1180)"
+# sem arquivo, o valor em uso é o padrão do hermes-desktop-up (900), não 1180
+ATUAL="$(cat "$ARQ" 2>/dev/null || echo 900)"
 
 if [ $# -eq 0 ]; then
   echo "tamanho atual: ${ATUAL}px de viewport (menor = texto maior)"
