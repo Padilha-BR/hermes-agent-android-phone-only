@@ -76,14 +76,28 @@ while true; do
   [ -x "$HERMES_HOME/bin/hermes-desktop-up" ] && "$HERMES_HOME/bin/hermes-desktop-up" >/dev/null 2>&1 8>&-
   # e o sshd do Termux (porta 8022, so chave publica), config em $PREFIX/etc/ssh/sshd_config.d/*.conf
   # Só se o openssh estiver instalado: sem ele o laço logava "ressuscitando" todo minuto.
+  # E só se o sshd foi CONFIGURADO de propósito (um *.conf em sshd_config.d, ou
+  # HERMES_WATCHDOG_SSHD=1): o sshd_config padrão do Termux aceita SENHA e escuta em
+  # todas as interfaces — quem instalou o openssh só pelo cliente `ssh` ganhava um
+  # servidor na rede Wi-Fi a cada boot. HERMES_WATCHDOG_SSHD=0 desliga sempre.
   # `8>&-`: o sshd vira daemon e viveria segurando o lock do watchdog.
-  if command -v sshd >/dev/null 2>&1 && ! pgrep -x sshd >/dev/null 2>&1; then
+  sshd_quer="${HERMES_WATCHDOG_SSHD:-}"
+  if [ -z "$sshd_quer" ]; then
+    sshd_quer=0
+    for c in "${PREFIX:-/data/data/com.termux/files/usr}"/etc/ssh/sshd_config.d/*.conf; do
+      [ -f "$c" ] && { sshd_quer=1; break; }
+    done
+  fi
+  if [ "$sshd_quer" = 1 ] && command -v sshd >/dev/null 2>&1 && ! pgrep -x sshd >/dev/null 2>&1; then
     echo "$(date '+%F %T') sshd ausente, ressuscitando" >>"$HERMES_HOME/logs/sshd.log"
     sshd >>"$HERMES_HOME/logs/sshd.log" 2>&1 8>&-
   fi
   # e o Chromium nativo com CDP na 9222 — motor do browser_exec do Hermes
   # (o Hermes não empacota Chromium arm64-android; browser.cdp_url aponta pra cá)
+  # Só com o Chromium instalado: sem ele o `chrome-cdp up` esperava 25 s e falhava
+  # a cada volta do laço, logando "ressuscitando" todo minuto.
   if [ -x "$HERMES_HOME/bin/chrome-cdp" ] && \
+     [ -x "${CHROME_BIN:-${PREFIX:-/data/data/com.termux/files/usr}/bin/chromium-browser}" ] && \
      ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:${CHROME_CDP_PORT:-9222}/json/version"; then
     echo "$(date '+%F %T') chromium CDP ausente, ressuscitando" >>"$HERMES_HOME/logs/chrome-cdp.log"
     "$HERMES_HOME/bin/chrome-cdp" up >>"$HERMES_HOME/logs/chrome-cdp.log" 2>&1 8>&-
