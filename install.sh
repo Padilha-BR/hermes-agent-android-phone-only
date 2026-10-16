@@ -134,9 +134,31 @@ for f in "$HOME/hermes-app/patch_dashboard_pwa.py" "$HOME/hermes-app/icon-192.pn
   [ -e "$f" ] || echo "ausente (fora do repo, opcional): $f"
 done
 echo "veja scripts/README.md → 'O que não está no repositório'."
-if [ "$copiados" -gt 0 ] && pgrep -f dashboard-watchdog.sh >/dev/null 2>&1; then
-  # pelo pidfile, não por `pkill -f`: rodado via `bash -c` o pkill casa a própria shell
-  echo "o watchdog em execução é a versão anterior — reinicie:"
-  echo "  kill \$(cut -d' ' -f1 $H/state/dashboard-watchdog.pid); setsid $H/scripts/dashboard-watchdog.sh &"
+# processos de verdade (argv0 = python) rodando <script>: `pgrep -f` sozinho casa
+# qualquer shell que cite o nome
+pids_python() {
+  local pid argv0 lista=""
+  for pid in $(pgrep -f "$1" 2>/dev/null); do
+    # 2> antes do <: processo que morreu no meio não suja a saída
+    argv0=$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/cmdline" | head -1)
+    case "$argv0" in *python*) lista="$lista $pid" ;; esac
+  done
+  echo "${lista# }"
+}
+if [ "$copiados" -gt 0 ]; then
+  if pgrep -f dashboard-watchdog.sh >/dev/null 2>&1; then
+    # pelo pidfile, não por `pkill -f`: rodado via `bash -c` o pkill casa a própria shell
+    echo "o watchdog em execução é a versão anterior — reinicie:"
+    echo "  kill \$(cut -d' ' -f1 $H/state/dashboard-watchdog.pid); setsid $H/scripts/dashboard-watchdog.sh &"
+  fi
+  web=$(pids_python hermes-desktop-web.py)
+  if [ -n "$web" ]; then
+    echo "servidores da UI/chat (8890/8891) rodando o código anterior (pid $web) — reinicie:"
+    echo "  kill $web   # o watchdog sobe os dois de novo em até 60 s (ou: hermes-desktop-up; hermes-chat)"
+  fi
+  pk=$(pids_python hermes-picker.py)
+  if [ -n "$pk" ]; then
+    echo "seletor de fotos rodando o código anterior (pid $pk) — encerre: kill $pk (o hermes-imagem sobe o novo)"
+  fi
 fi
 [ "$falhas" -eq 0 ]
