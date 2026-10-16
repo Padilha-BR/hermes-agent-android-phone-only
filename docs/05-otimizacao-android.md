@@ -73,7 +73,7 @@ CPU, memória disponível em ~240 MB, **7 GB de swap**. Origem: `pydantic-core`,
 `uv sync --frozen --all-packages` (provisionamento do runtime/plugins, PPID 1).
 
 Remédio imediato (**não mata nada**): `renice -n 19` na árvore — devolveu ~3 GB de memória
-disponível na hora. O `hermes-calm` ([scripts/hermes-mobile](../scripts/hermes-mobile)) faz isso.
+disponível na hora. O `hermes-calm` ([scripts/hermes-calm](../scripts/hermes-calm)) faz isso.
 Para não repetir: manter `CARGO_BUILD_JOBS=2` e os plugins de plataforma/browser desnecessários em
 `plugins.disabled` é o que impede o aparelho de virar forno.
 

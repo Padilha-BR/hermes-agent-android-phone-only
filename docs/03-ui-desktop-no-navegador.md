@@ -143,8 +143,10 @@ python ~/.hermes/bin/gerar-shim-stubs.py    # lê apps/desktop/src/global.d.ts
 ```
 
 O servidor serve isso como `/__stubs.js` **antes** do `/__shim.js`, e o shim usa
-`Object.assign(window.__HERMES_STUBS__, { ...implementações reais })` — a base
-gerada cobre o que você não pensou, suas implementações vencem no que importa.
+um **merge profundo** da base gerada com as implementações reais — a base cobre o que
+você não pensou, suas implementações vencem no que importa. Tem que ser profundo: com
+`Object.assign` (raso), um grupo do shim (`git: {...}`) substituía o grupo gerado
+inteiro e todo método que o shim não reimplementou virava `X is not a function`.
 
 ### Regras de contrato que o gerador precisa respeitar
 
