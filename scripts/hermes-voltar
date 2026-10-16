@@ -10,10 +10,18 @@
 # Uso:
 #   hermes-voltar           # abre o app (WebAPK) do Hermes
 #   hermes-voltar status    # mostra qual pacote/URL é considerado "o app"
+#
+# A REGRA AQUI É PROVAR PELO EFEITO (corrigido 16/10/2026): o `am start` sai com
+# 0 e imprime "Starting: Intent {…}" tanto quando abre quanto quando o Android
+# BLOQUEIA o launch em segundo plano, e o launch por COMPONENTE EXPLÍCITO é
+# bloqueado (Android 10+). Versões anteriores diziam "App do Hermes aberto" com
+# a página ainda em branco — mentiram para o usuário e para o agente. Agora:
+# manda o intent VIEW (o caminho que o Chrome entrega ao WebAPK instalado, mesmo
+# com o Termux atrás) e confirma pelo contador de páginas conectadas no injetor.
 set -u
 PORT="${HERMES_DESKTOP_WEB_PORT:-8890}"
 URL="http://127.0.0.1:${PORT}"
-# Nome amigável (só pro status)
+H="${HERMES_HOME:-$HOME/.hermes}"
 APP_NOME="UI portada do desktop (${URL})"
 
 webapk_da_porta() {
@@ -37,48 +45,88 @@ PY
   return 1
 }
 
+paginas() {
+  # Páginas com o canal SSE aberto neste injetor = "o app está aberto E carregou
+  # esta UI". É a única medida de efeito disponível de fora. O js=1 é inócuo.
+  # Imprime vazio (e sai 1) quando não dá para medir — canal desligado ou sem token.
+  local tok resp
+  tok=$(cat "$H/state/desktop-cmd-token" 2>/dev/null || true)
+  [ -n "$tok" ] || return 1
+  resp=$(curl -s --max-time 4 "$URL/__cmd?js=1&token=$tok" 2>/dev/null || true)
+  case "$resp" in
+    *'"paginas"'*) printf '%s' "$resp" | sed -n 's/.*"paginas": *\([0-9][0-9]*\).*/\1/p' ;;
+    *) return 1 ;;
+  esac
+}
+
+abrir() {
+  local antes agora i pkg sub out abriu
+  pkg=$(webapk_da_porta) || pkg=""
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)" != "200" ]; then
+    echo "servidor $URL fora do ar — subindo..."
+    "$HOME/.hermes/bin/hermes-desktop-up" || exit 1
+  fi
+  antes=$(paginas || true)
+  [ -n "$antes" ] || echo "aviso: não consegui contar as páginas abertas (canal /__cmd desligado) — vou abrir sem confirmar o efeito"
+
+  # 1º: intent VIEW. É o único caminho que o Android entrega ao WebAPK com o
+  # Termux atrás; o componente explícito vem depois, e só como plano B.
+  am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+  abriu="VIEW"
+
+  for _ in $(seq 1 10); do
+    sleep 1
+    agora=$(paginas || true)
+    [ -n "$agora" ] || break
+    [ -n "$antes" ] || { [ "$agora" -gt 0 ] && break; continue; }
+    [ "$agora" -gt "$antes" ] && break
+  done
+
+  # plano B (componente explícito) SÓ quando nada conectou — se já havia página
+  # viva, o app está aberto: insistir no componente só confunde o relato.
+  if [ -n "$pkg" ] && { [ -z "$antes" ] || [ "${agora:-0}" = "0" ]; } && [ "${agora:-0}" != "$antes" ]; then
+    for sub in \
+      org.chromium.webapk.shell_apk.h2o.SplashActivity \
+      org.chromium.webapk.shell_apk.h2o.H2OMainActivity \
+      org.chromium.webapk.shell_apk.MainActivity
+    do
+      out=$(am start -n "$pkg/$sub" 2>&1)
+      case "$out" in *"Error:"*|*"unable to resolve"*) continue ;; esac
+      abriu="$sub"; break
+    done
+    for _ in $(seq 1 6); do
+      sleep 1
+      agora=$(paginas || true)
+      [ -n "$agora" ] && [ -n "$antes" ] && [ "$agora" -gt "$antes" ] && break
+    done
+  fi
+
+  if [ -n "${agora:-}" ] && [ -n "$antes" ]; then
+    if [ "$agora" -gt "$antes" ]; then
+      echo "App do Hermes aberto e carregando ($URL) — páginas conectadas: $antes → $agora."
+    elif [ "$agora" -gt 0 ]; then
+      echo "O app já estava aberto (páginas conectadas: $agora) — mandei trazer para a frente"
+      echo "por $abriu. Se a tela não mudou, toque no ícone do Hermes."
+    else
+      echo "NÃO confirmei o app abrindo: mandei o intent ($abriu) e nenhuma página conectou."
+      echo "Tente pelo ícone da tela inicial; se seguir em branco, veja $H/logs/desktop-web.log."
+    fi
+  else
+    echo "Intentei abrir ($abriu) — sem o contador de páginas não tenho como confirmar."
+    echo "Confira a tela do aparelho: o app deve estar em $URL."
+  fi
+}
+
 case "${1:-abrir}" in
   status)
     PKG=$(webapk_da_porta) || PKG=""
     echo "app alvo : $APP_NOME"
     echo "webapk   : ${PKG:-(nenhum WebAPK apontando pra essa porta)}"
-    H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)
-    echo "servidor : http=$H ($URL)"
+    H_COD=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)
+    echo "servidor : http=$H_COD ($URL)"
+    echo "paginas  : $(paginas || echo '? (canal /__cmd desligado)')"
     ;;
-  abrir|"")
-    PKG=$(webapk_da_porta) || PKG=""
-    H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)
-    if [ "$H" != "200" ]; then
-      echo "servidor $URL fora do ar (http=$H) — subindo..."
-      "$HOME/.hermes/bin/hermes-desktop-up" || exit 1
-    fi
-    if [ -n "$PKG" ]; then
-      # WebAPK NÃO resolve por MAIN/LAUNCHER com -p (dá "unable to resolve Intent"):
-      # o activity tem que ser EXPLÍCITO. Medido: a SplashActivity do shell abre e a
-      # página do app (8890) é carregada de verdade (GET / novo no log do injetor).
-      ABRIU=""
-      for SUB in \
-        org.chromium.webapk.shell_apk.h2o.SplashActivity \
-        org.chromium.webapk.shell_apk.h2o.H2OMainActivity \
-        org.chromium.webapk.shell_apk.MainActivity
-      do
-        OUT=$(am start -n "$PKG/$SUB" 2>&1)
-        case "$OUT" in
-          *"Error:"*|*"unable to resolve"*) continue ;;
-        esac
-        ABRIU="$SUB"; break
-      done
-      if [ -n "$ABRIU" ]; then
-        echo "App do Hermes aberto (pacote $PKG + $ABRIU -> $URL)."
-      else
-        echo "WebAPK $PKG achado mas nenhuma activity abriu — caindo pra URL."
-        am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
-      fi
-    else
-      echo "Sem WebAPK pra $URL — abrindo a URL no navegador (pode vir aba nova)."
-      am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
-    fi
-    ;;
+  abrir|"") abrir ;;
   *)
     echo "uso: hermes-voltar [abrir|status]"; exit 2 ;;
 esac
