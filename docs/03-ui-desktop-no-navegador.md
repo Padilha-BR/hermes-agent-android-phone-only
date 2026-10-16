@@ -21,8 +21,16 @@ de preload. É por isso que servir o bundle dele num navegador exige shim.
 ```bash
 cd apps/desktop
 npm install --ignore-scripts --no-audit --no-fund   # --ignore-scripts evita baixar o binário do Electron
-nice -n 10 node ../../node_modules/vite/bin/vite.js build   # → apps/desktop/dist (~45 MB)
+nice -n 10 node ~/.hermes/scripts/build-desktop-web.mjs   # → ~/hermes-agent/.hermes-port/renderer (~45 MB)
 ```
+
+- **Um destino só**: o `build-desktop-web.mjs` grava em
+  `~/hermes-agent/.hermes-port/renderer` (ou em `$HERMES_DESKTOP_WEB`), que é o
+  mesmo diretório que o `hermes-desktop-up`, o `hermes-desktop-web.py` e o
+  `gerar-fontes-embutidas.py` leem por padrão. O `vite build` "puro" ainda
+  funciona, mas sai em `apps/desktop/dist` — aí exporte
+  `HERMES_DESKTOP_WEB=~/hermes-agent/apps/desktop/dist` para os três.
+  `HERMES_AGENT_DIR` muda o clone do Hermes (padrão `~/hermes-agent`).
 
 - **Não use `npm run build`**: ele chama `scripts/build.mjs` → `stage-native-deps`
   + `bundleElectronMain`, isto é, monta o app Electron inteiro. O único passo que
