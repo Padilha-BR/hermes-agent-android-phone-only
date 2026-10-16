@@ -24,5 +24,6 @@ curl -s -o /dev/null --max-time 3 "$URL/__health" || { echo "nao subiu — veja 
 
 echo "Chat do Hermes no ar: $URL"
 echo -n "$URL" | termux-clipboard-set 2>/dev/null
-termux-open-url "$URL" >/dev/null 2>&1
-am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+# UMA abertura: os dois comandos juntos abriam a URL duas vezes. `am start` diz
+# se falhou; termux-open-url fica de reserva (ele sai 0 mesmo bloqueado).
+am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1 || termux-open-url "$URL" >/dev/null 2>&1

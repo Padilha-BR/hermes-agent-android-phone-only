@@ -7,7 +7,9 @@ status() {
   [ "$H" = "200" ] && echo "  app (dashboard 9119): NO AR" || echo "  app (dashboard 9119): fora do ar"
   W=$(awk '{print $1}' "$HOME/.hermes/state/dashboard-watchdog.pid" 2>/dev/null)
   if [ -n "$W" ] && kill -0 "$W" 2>/dev/null; then echo "  vigia do app: ativo (pid $W)"; else echo "  vigia do app: PARADO"; fi
-  free -m 2>/dev/null | awk 'NR==2 {printf "  memoria: %s MB disponiveis\n", $4+$6}'
+  # "available" é a 7ª coluna; free+buff/cache ($4+$6) superestima (cache nem
+  # sempre é recuperável). Sem a coluna (free antigo), cai na soma.
+  free -m 2>/dev/null | awk 'NR==2 {printf "  memoria: %s MB disponiveis\n", (NF >= 7 ? $7 : $4+$6)}'
 }
 
 while true; do
