@@ -144,7 +144,11 @@ elif _cmd_env == "1" or CMD_INSEGURO:
 else:
     CMD_LIGADO = bool(CMD_TOKEN)
 
-LAST_TOKEN = ""  # último token lido do backend, só para redigir no log
+LAST_TOKEN = ""  # último token lido do backend
+# TODOS os tokens já vistos neste processo: depois que o backend reinicia, uma
+# página antiga ainda manda erro/URL com o token VELHO — e ele também é segredo
+# enquanto alguma sessão o aceitar. Redigir só o atual deixava o velho no log.
+TOKENS_VISTOS: set = set()
 VERSION = str(time.time())  # muda a cada correção → a página aberta recarrega sozinha
 RELOAD_FLAGS: list = []  # sinalizadores das páginas abertas (canal SSE)
 PENDENTES: list = []  # [(ts, id, json)] — comandos/recargas para as páginas abertas
@@ -216,13 +220,19 @@ def fetch_token() -> str:
     m = re.search(r'__HERMES_SESSION_TOKEN__\s*=\s*["\']([^"\']+)["\']', html)
     if m:
         LAST_TOKEN = m.group(1)
+        TOKENS_VISTOS.add(LAST_TOKEN)
         return LAST_TOKEN
     return ""
 
 
 def redact(text: str) -> str:
     """Nunca deixa o token da sessão cair em log/arquivo em texto puro."""
-    return text.replace(LAST_TOKEN, "<token>") if LAST_TOKEN else text
+    for tok in list(TOKENS_VISTOS):
+        if tok:
+            text = text.replace(tok, "<token>")
+    if CMD_TOKEN:
+        text = text.replace(CMD_TOKEN, "<cmd-token>")
+    return text
 
 
 PONTE = """<script>
