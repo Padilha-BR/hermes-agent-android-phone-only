@@ -85,14 +85,47 @@ def _ler_token_arquivo() -> str:
         return ""
 
 
+def _ler_token_esperando() -> str:
+    """Lê o arquivo que OUTRO servidor acabou de criar: pode estar vazio por um
+    instante (criado, ainda não escrito). Espera até 2 s em vez de ler ""."""
+    for _ in range(20):
+        tok = _ler_token_arquivo()
+        if tok:
+            return tok
+        time.sleep(0.1)
+    return ""
+
+
 def _criar_token_arquivo() -> str:
-    """Gera o segredo e grava com 0600 já na criação (sem janela de leitura)."""
+    """Gera o segredo e grava com 0600 já na criação (sem janela de leitura).
+
+    8890 e 8891 sobem juntos pelo watchdog: o arquivo só aparece COMPLETO —
+    escrito num temporário 0600 e publicado com os.link (atômico, falha se já
+    existe). Se o link não for permitido (SELinux de algumas versões do Android),
+    cai no O_EXCL + escrita, e quem perde a corrida lê esperando conteúdo."""
     CMD_ARQ.parent.mkdir(parents=True, exist_ok=True)
     tok = secrets.token_urlsafe(24)
+    tmp = CMD_ARQ.with_name(f".{CMD_ARQ.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(tok)
+        try:
+            os.link(tmp, CMD_ARQ)
+            return tok
+        except FileExistsError:  # o outro servidor (8890 x 8891) publicou primeiro
+            return _ler_token_esperando()
+        except OSError:
+            pass  # sem hard link: segue pelo O_EXCL abaixo
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
     try:
         fd = os.open(str(CMD_ARQ), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:  # o outro servidor (8890 x 8891) criou primeiro
-        return _ler_token_arquivo()
+    except FileExistsError:
+        return _ler_token_esperando()
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(tok)
     return tok
@@ -100,7 +133,7 @@ def _criar_token_arquivo() -> str:
 
 CMD_INSEGURO = os.environ.get("HERMES_DESKTOP_CMD_INSECURE", "") == "1"
 _cmd_env = os.environ.get("HERMES_DESKTOP_CMD", "").strip()
-CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or _ler_token_arquivo()
+CMD_TOKEN = os.environ.get("HERMES_DESKTOP_CMD_TOKEN", "") or (_ler_token_esperando() if CMD_ARQ.exists() else "")
 CMD_TOKEN_ORIGEM = "env" if os.environ.get("HERMES_DESKTOP_CMD_TOKEN") else ("arquivo" if CMD_TOKEN else "")
 if _cmd_env == "0":
     CMD_LIGADO = False
