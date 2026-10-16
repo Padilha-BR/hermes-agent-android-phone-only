@@ -132,10 +132,19 @@
     ws = meu
 
     meu.onopen = async () => {
-      tentativas = 0
+      // NÃO zera `tentativas` aqui: se o gateway aceita o upgrade e fecha por
+      // token inválido, o contador nunca chegava a 3 e o renovarToken() não
+      // rodava. Só conta como conexão boa depois que o 1º RPC responde.
       ligar(true)
       bannerLimpar()
-      try { await rpc('client.capabilities', { server_requests: true }) } catch (e) {}
+      try {
+        await rpc('client.capabilities', { server_requests: true })
+        tentativas = 0
+      } catch (e) {
+        // erro DO gateway (método recusado etc.) com o socket ainda aberto também
+        // prova que a conexão está de pé; rejeição por queda não zera
+        if (ws === meu && meu.readyState === WebSocket.OPEN) tentativas = 0
+      }
       // reconexão: o sid vivo pode ter sido recolhido pelo gateway (ou o backend
       // reiniciou) — retoma pela conversa SALVA em vez de mandar no sid velho
       if (!sid) await novaConversa(true)
