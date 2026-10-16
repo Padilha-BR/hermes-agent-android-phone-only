@@ -59,3 +59,20 @@ jobs:
 
       - name: injeção do desktop-web — template formata e o JS passa no node --check
         run: python scripts/validar-injecao.py scripts/hermes-desktop-web.py
+
+      - name: install.sh — destinos num HOME temporário e idempotência
+        run: |
+          set -euo pipefail
+          unset HERMES_HOME
+          HOME="$(mktemp -d)"; export HOME
+          bash install.sh >/dev/null
+          # o CSS do porte vai para $HERMES_HOME, não para bin/; comandos novos vão para bin/
+          test -f "$HOME/.hermes/desktop-port.css"
+          test ! -e "$HOME/.hermes/bin/desktop-port.css"
+          for c in chrome-cdp hermes-voltar hermes-chat-up hermes-desktop-web.py; do
+            test -x "$HOME/.hermes/bin/$c"
+          done
+          test -x "$HOME/.termux/boot/10-hermes-dashboard.sh"
+          # segunda rodada não troca nada
+          saida="$(bash install.sh)"
+          grep -q 'instalados: 0 ' <<<"$saida"
