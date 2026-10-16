@@ -11,12 +11,13 @@ Measured on **Android 16 / API 36, One UI 8** (2026-10-14) and re-checked on **A
 desktop app's own React renderer*, served to the phone's browser by the phone itself. The phone is both host and client, with no second machine anywhere in the loop — no container host, no tunnel, nothing else in it. The dashboard is pinned to the home
 screen as an installable PWA, and a watchdog keeps it alive when Android suspends Termux.
 
-> ⚠️ **It works, but it's a workaround — not an app.** There is no APK here and this is not a
-> product: it is a PWA plus a ported desktop UI, held together by scripts. It runs and it is usable
-> every day, but **some features still don't work 100%** — the in-app terminal, native git, file
-> dialogs, multi-window/HUD and the pet overlay are inert by design (they are Electron-native), and
-> Android may suspend Termux whenever it feels like it. Read [Honest
-> limitations](#honest-limitations) before you try it.
+> ⚠️ **This is an early version — and not an app.** There is **no official APK** for it yet: what is
+> here is a PWA plus a ported desktop UI, held together by scripts. It runs and it is usable every
+> day, but **being an early version it still has bugs** — the in-app terminal, native git, file
+> dialogs, multi-window/HUD and the pet overlay are inert by design (they are Electron-native),
+> Android may suspend Termux whenever it feels like it, and the rest shows up in practice.
+> **Any and all help is welcome:** an issue, a PR, a bug report or a "here is what happened on my
+> device" all count. Read [Honest limitations](#honest-limitations) before you try.
 
 This is not a fork and not an installer. It is a field report plus the actual scripts we run daily:
 what broke, why it broke, and the recipe that fixed it.
@@ -258,6 +259,21 @@ surface checks in this README were re-run on Android 17 — 8890, 8891, 9119 and
 - We did **not** upstream anything; the scripts are ours, unversioned against upstream internals, and
   they read `hermes_cli/web_dist` and build the desktop renderer into `.hermes-port/renderer` from
   `apps/desktop` — paths and internals that upstream can move (pin commit 311155f if in doubt).
+
+## Help is welcome
+
+This is an early version and it will stay incomplete without people using it. **Any and all help
+counts**, including the cheapest kind:
+
+- **Tried it on your device and something broke?** Open an issue with the model, the Android version,
+  which port answered (or did not) and the command you ran. A bug report from a device other than ours
+  is real contribution — exactly one phone has been tested here.
+- **Found a script that does not run, a doc that lies, a missing step?** Issue or PR, either is fine.
+- **Have a better port, or an APK in progress?** Open an issue and tell us —
+  [doc 07](docs/07-porta-para-app-android.md) says what a real native app still needs and why that is a
+  product and distribution decision, not a code one.
+- **English.** The docs are in Portuguese on purpose (they are our working notes); this README is not.
+  Fixing the wording in English counts as help too.
 
 ## Credits
 

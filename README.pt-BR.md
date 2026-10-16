@@ -11,11 +11,13 @@ O telefone é host e cliente ao mesmo tempo — sem uma segunda máquina em luga
 dashboard vira um PWA instalado na tela inicial, com um watchdog que o mantém vivo quando o Android
 suspende o Termux.
 
-> ⚠️ **Funciona, mas é gambiarra — não é um app.** Aqui não tem APK nenhum e isto não é um produto:
-> é um PWA mais a UI do desktop portada, tudo segurado por scripts. Roda e é usável todo dia, mas
-> **algumas funcionalidades ainda não funcionam 100%** — terminal in-app, git nativo, diálogos de
-> arquivo, multi-janela/HUD e o pet overlay ficam inertes por design (são nativos do Electron), e o
-> Android pode suspender o Termux quando quiser. Leia as limitações honestas antes de tentar.
+> ⚠️ **É uma versão inicial — e não é um app.** Ainda **não existe APK oficial** disto: o que tem
+> aqui é um PWA mais a UI do desktop portada, tudo segurado por scripts. Roda e é usável todo dia,
+> mas **por ser versão inicial ainda tem bugs** — terminal in-app, git nativo, diálogos de arquivo,
+> multi-janela/HUD e o pet overlay ficam inertes por design (são nativos do Electron), o Android pode
+> suspender o Termux quando quiser, e o resto aparece na prática. **Toda e qualquer ajuda é bem-vinda:**
+> issue, PR, relato de bug ou um "no meu aparelho deu isso" já vale. Leia as limitações honestas antes
+> de tentar.
 
 Não é fork e não é instalador. É um relato de campo + os scripts que a gente usa todo dia: o que
 quebrou, por que quebrou, e a receita que consertou.
@@ -262,6 +264,21 @@ responderam 200.
 - **Não subimos nada para o upstream.** Os scripts são nossos, sem versionamento contra internals,
   leem `hermes_cli/web_dist` e buildam o renderer do desktop em `.hermes-port/renderer` a partir
   de `apps/desktop` — caminhos e internals que o upstream pode mover (na dúvida, fixe o 311155f).
+
+## Ajuda é bem-vinda
+
+Isto é uma versão inicial e vai continuar incompleta sem gente usando. **Toda e qualquer ajuda conta**,
+inclusive a mais barata:
+
+- **Rodou no seu aparelho e quebrou?** Abra uma issue dizendo modelo, versão do Android, qual porta
+  respondia (ou não) e o comando que você deu. Um relato de bug em aparelho diferente do nosso já é
+  contribuição de verdade — aqui só existe UM telefone testado.
+- **Achou um script que não roda, um doc que mente ou um passo faltando?** Issue ou PR, tanto faz.
+- **Tem um port melhor, ou um APK em andamento?** Abra uma issue contando — o
+  [doc 07](docs/07-porta-para-app-android.md) diz o que falta para um app nativo de verdade e por que
+  isso é decisão de produto e de canal, não de código.
+- **Inglês.** Os docs são em português de propósito (são nossas notas de trabalho); o README não.
+  Correção de texto em inglês também é ajuda.
 
 ## Créditos
 
