@@ -40,7 +40,7 @@
    Nada aqui muda cor, tamanho, espaçamento ou tipografia: são os ajustes que
    fazem uma página feita para mouse se comportar como app nativo no dedo.
    Tudo atrás de `pointer: coarse` para não afetar um desktop (o mesmo injetor
-   pode servir a UI num navegador de computador).
+   pode servir a UI num navegador de outra máquina).
    ══════════════════════════════════════════════════════════════════════════ */
 @media (pointer: coarse) {
   /* O Android pinta uma caixa azul-acinzentada por cima do elemento tocado —

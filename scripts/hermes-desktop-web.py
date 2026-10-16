@@ -1091,8 +1091,8 @@ class Handler(BaseHTTPRequestHandler):
             # instalável como app próprio. (O PONTE é `%`-formatado, não f-string:
             # aqui é JSON gerado em Python, sem chave dobrada nenhuma.)
             man = {
-                "name": "Hermes (cara do PC)",
-                "short_name": "Hermes PC",
+                "name": "Hermes (cara do desktop)",
+                "short_name": "Hermes desktop",
                 "start_url": "/",
                 "scope": "/",
                 "display": "standalone",
