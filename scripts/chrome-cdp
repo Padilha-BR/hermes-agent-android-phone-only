@@ -35,6 +35,11 @@ up() {
     echo "chrome-cdp: já no ar em 127.0.0.1:$PORT (pid $(pgrep -f "remote-debugging-port=$PORT" 2>/dev/null | head -1))"
     return 0
   fi
+  if [ ! -x "$BIN" ]; then
+    # sem isto o setsid falhava calado e o laço abaixo esperava 25 s à toa
+    echo "chrome-cdp: $BIN não existe (pkg install chromium, ou CHROME_BIN=...)" >&2
+    return 1
+  fi
   echo "$(date '+%F %T') up: subindo chromium headless porta $PORT" >>"$LOG"
   setsid nohup "$BIN" \
     --headless=new \
