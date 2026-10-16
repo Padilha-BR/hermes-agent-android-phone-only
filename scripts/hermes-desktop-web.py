@@ -503,12 +503,27 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj: dict, code: int = 200) -> None:
         return self._send(json.dumps(obj).encode(), "application/json", code)
 
+    def _so_caminho(self) -> str:
+        """Path SEM a query, para log: a query do GET /__cmd leva `token=`."""
+        return uma_linha(urlparse(getattr(self, "path", "") or "").path)[:200]
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: D401 (assinatura da stdlib)
+        # O padrão do BaseHTTPRequestHandler grava a linha da requisição INTEIRA
+        # (com `?token=…` do GET /__cmd) no stderr, que vai para
+        # desktop-web-server.log / chat-server.log. Aqui sai só método + path.
+        msg = fmt % args if args else fmt
+        linha = getattr(self, "requestline", "") or ""
+        if linha:
+            msg = msg.replace(linha, f"{getattr(self, 'command', None) or '-'} {self._so_caminho()}")
+        msg = re.sub(r"\?[^\s\"']*", "?…", msg)  # rede de segurança: nenhuma query no log
+        sys.stderr.write(f"{self.log_date_time_string()} {uma_linha(msg)}\n")
+
     # ── guardas (loopback não é fronteira de confiança no Android) ───────────
     def _host_ok(self) -> bool:
         """Anti DNS rebinding: o Host tem de ser o próprio loopback desta porta."""
         if (self.headers.get("host") or "").strip().lower() in HOSTS_OK:
             return True
-        log(f"[seg] Host recusado: {uma_linha(str(self.headers.get('host')))[:80]} em {uma_linha(self.path)[:80]}")
+        log(f"[seg] Host recusado: {uma_linha(str(self.headers.get('host')))[:80]} em {self._so_caminho()[:80]}")
         return False
 
     def _origem_ok(self) -> bool:
@@ -520,11 +535,11 @@ class Handler(BaseHTTPRequestHandler):
         não mandam nenhum dos dois)."""
         origem = self.headers.get("origin")
         if origem is not None and origem.strip().lower() not in ORIGENS_OK:
-            log(f"[seg] Origin recusado: {uma_linha(origem)[:80]} em {uma_linha(self.path)[:80]}")
+            log(f"[seg] Origin recusado: {uma_linha(origem)[:80]} em {self._so_caminho()[:80]}")
             return False
         sfs = (self.headers.get("sec-fetch-site") or "").strip().lower()
         if sfs and sfs not in ("same-origin", "none"):
-            log(f"[seg] Sec-Fetch-Site={uma_linha(sfs)[:20]} recusado em {uma_linha(self.path)[:80]}")
+            log(f"[seg] Sec-Fetch-Site={uma_linha(sfs)[:20]} recusado em {self._so_caminho()[:80]}")
             return False
         return True
 
