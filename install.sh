@@ -11,8 +11,10 @@
 # Uso: bash install.sh [--bashrc] [--dry-run]
 #   --bashrc  : acrescenta $HERMES_HOME/bin ao PATH no ~/.bashrc (uma vez, com marcador)
 #   --dry-run : só mostra o que faria
-# Arquivo existente com conteúdo diferente é guardado como <arquivo>.bak antes de
-# ser trocado (só a última versão). Não toca em config, chaves, memórias nem logs.
+# Arquivo existente com conteúdo diferente é guardado antes de ser trocado em
+# $HERMES_HOME/backup/install/<caminho>.<data>.bak (0600, sem execução) — FORA dos
+# diretórios de destino: um .bak executável em ~/.termux/boot rodaria no boot e em
+# ~/.shortcuts viraria um atalho duplicado. Não toca em config, chaves, memórias nem logs.
 set -u
 cd "$(dirname "$0")" || exit 1
 H="${HERMES_HOME:-$HOME/.hermes}"
@@ -27,6 +29,18 @@ for a in "$@"; do
 done
 
 copiados=0; iguais=0
+QUANDO="$(date +%Y%m%d-%H%M%S)"
+BACKUP="$H/backup/install"
+# guarda a versão atual de <destino> fora do diretório dele, sem bit de execução
+guardar() {
+  local dst="$1" rel
+  case "$dst" in
+    "$HOME"/*) rel="${dst#"$HOME"/}" ;;
+    *) rel="${dst#/}" ;;
+  esac
+  mkdir -p "$(dirname "$BACKUP/$rel")" &&
+    cp "$dst" "$BACKUP/$rel.$QUANDO.bak" && chmod 600 "$BACKUP/$rel.$QUANDO.bak"
+}
 # instala <origem> em <destino> com o modo dado; pula se já é idêntico
 instalar() {
   local src="$1" dst="$2" modo="$3"
@@ -37,7 +51,9 @@ instalar() {
   fi
   if [ "$DRY" = 1 ]; then echo "  copiaria $src → $dst"; copiados=$((copiados+1)); return 0; fi
   mkdir -p "$(dirname "$dst")" || return 1
-  [ -f "$dst" ] && cp -p "$dst" "$dst.bak"
+  if [ -f "$dst" ] && ! guardar "$dst"; then
+    echo "FALHA ao guardar a versão atual de $dst — não troquei"; return 1
+  fi
   # .tmp + mv: um script em execução (o watchdog, por exemplo) não lê arquivo pela metade
   cp "$src" "$dst.tmp.$$" && chmod "$modo" "$dst.tmp.$$" && mv -f "$dst.tmp.$$" "$dst" || {
     rm -f "$dst.tmp.$$"; echo "FALHA ao instalar $dst"; return 1; }

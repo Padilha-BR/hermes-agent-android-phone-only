@@ -5,7 +5,9 @@ A instalação é o `install.sh` da raiz (idempotente — rode de novo depois de
 `.sh`/`.mjs` → `~/.hermes/scripts/` (chamados pelo watchdog), comandos/`.py`/shims →
 `~/.hermes/bin/` (no `PATH` pelo `~/.bashrc`; `install.sh --bashrc` acrescenta a linha),
 `chat/` → `~/.hermes/chat/`, `shortcuts/` → `~/.shortcuts/` e `10-hermes-dashboard.sh` →
-`~/.termux/boot/`. Arquivo trocado vira `<arquivo>.bak`. Nada aqui contém credencial — chaves
+`~/.termux/boot/`. A versão anterior de um arquivo trocado vai para
+`~/.hermes/backup/install/<caminho>.<data>.bak` (0600) — nunca ao lado do original, porque
+um `.bak` em `~/.termux/boot/` rodaria no boot. Nada aqui contém credencial — chaves
 ficam no arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 
 > `$PREFIX/bin` é protegido para escrita pelo agente no Termux: escreva o script em
