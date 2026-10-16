@@ -514,8 +514,11 @@ def _origens_backend() -> str:
     return f"{u.scheme}://{u.netloc} {ws}://{u.netloc}"
 
 
-# assets com hash de conteúdo no nome (Vite: `nome-AbC123_x.js`) nunca mudam:
-# podem ficar em cache. O resto (HTML, shim, stubs) segue no-store.
+# assets com hash de conteúdo no nome (Vite: `assets/nome-AbC123_x.js`) nunca mudam:
+# podem ficar em cache. O resto (HTML, shim, stubs) segue no-store. Só vale DENTRO
+# de assets/ (onde o Vite põe os arquivos com hash): fora dele o padrão casava nome
+# comum com 8 caracteres depois do hífen (`logo-whitebig.png`, `icon-maskable.png`) e um
+# arquivo trocado no lugar ficava um ano preso no cache do navegador.
 _ASSET_HASH = re.compile(r"-[A-Za-z0-9_-]{8}\.(?:js|mjs|css|woff2?|ttf|png|jpe?g|gif|webp|svg|wasm)$")
 
 
@@ -798,7 +801,8 @@ class Handler(BaseHTTPRequestHandler):
         data = target.read_bytes()
         if target.suffix == ".html":
             return self._send(self._injetar(data.decode("utf-8", "replace")).encode(), MIME[".html"])
-        cache = "public, max-age=31536000, immutable" if _ASSET_HASH.search(target.name) else "no-store"
+        imutavel = target.parent == (BUNDLE / "assets").resolve() and _ASSET_HASH.search(target.name)
+        cache = "public, max-age=31536000, immutable" if imutavel else "no-store"
         return self._send(data, MIME.get(target.suffix, "application/octet-stream"), cache=cache)
 
     def _injetar(self, html: str) -> str:
