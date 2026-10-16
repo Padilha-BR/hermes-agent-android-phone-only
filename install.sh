@@ -4,6 +4,7 @@
 #
 #   scripts/*.sh, build-desktop-web.mjs → $HERMES_HOME/scripts/  (o watchdog chama daqui)
 #   comandos, .py e shim*.js            → $HERMES_HOME/bin/
+#   scripts/desktop-port.css            → $HERMES_HOME/desktop-port.css (CSS do porte, 8890)
 #   scripts/chat/                       → $HERMES_HOME/chat/
 #   scripts/shortcuts/*                 → ~/.shortcuts/      (Termux:Widget)
 #   scripts/10-hermes-dashboard.sh      → ~/.termux/boot/    (Termux:Boot)
@@ -72,7 +73,8 @@ echo "== $H/bin"
 for f in scripts/*; do
   [ -f "$f" ] || continue
   case "$(basename "$f")" in
-    *.sh|*.md|*.mjs|*.js) continue ;;   # .sh/.mjs vão para scripts/, shims logo abaixo
+    # .sh/.mjs vão para scripts/, shims logo abaixo; .css não é comando (vai para $H)
+    *.sh|*.md|*.mjs|*.js|*.css) continue ;;
   esac
   instalar "$f" "$H/bin/$(basename "$f")" 755 || falhas=$((falhas+1))
 done
@@ -84,6 +86,9 @@ if [ -f "$H/bin/shim-stubs.js" ]; then
 else
   instalar scripts/shim-stubs.js "$H/bin/shim-stubs.js" 644 || falhas=$((falhas+1))
 fi
+
+echo "== $H (CSS do porte, lido pelo hermes-desktop-up via HERMES_WEB_EXTRA_CSS)"
+instalar scripts/desktop-port.css "$H/desktop-port.css" 644 || falhas=$((falhas+1))
 
 echo "== $H/chat"
 for f in scripts/chat/*; do
@@ -129,8 +134,7 @@ echo "instalados: $copiados  ·  já iguais: $iguais  ·  falhas: $falhas"
 
 # o que NÃO está no repo e o resto do sistema procura (só avisa)
 for f in "$HOME/hermes-app/patch_dashboard_pwa.py" "$HOME/hermes-app/icon-192.png" \
-         "$HOME/hermes-app/icon-512.png" "$H/desktop-look.css" "$H/desktop-port.css" \
-         "$H/desktop-fonts.css"; do
+         "$HOME/hermes-app/icon-512.png" "$H/desktop-look.css" "$H/desktop-fonts.css"; do
   [ -e "$f" ] || echo "ausente (fora do repo, opcional): $f"
 done
 echo "veja scripts/README.md → 'O que não está no repositório'."
