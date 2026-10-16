@@ -229,8 +229,9 @@ saber antes de culpar a sua própria instalação:
 - **O `termux-exec` parou de reescrever o shebang `/usr/bin/env`.** Script cuja primeira linha é
   `#!/usr/bin/env …` agora morre com `bad interpreter: No such file or directory`. Esconde bem: um
   launcher que só confere se o arquivo existe continua passando. Contornar é chamar o script por
-  `sys.executable`, ou apontar o shebang para `$PREFIX/bin/env` — o instalador do repositório irmão faz
-  o segundo, de forma idempotente, no binário do udocker.
+  `sys.executable`, ou apontar o shebang para `$PREFIX/bin/env` — que é o que o `install.sh` deste
+  repositório faz com todo script que instala, **a cada execução**, inclusive num aparelho que já tinha
+  os scripts (o instalador do repositório irmão faz o mesmo com o binário do udocker).
 - **O app pode ser aberto antes de as superfícies existirem.** O `Termux:Boot` roda na agenda do Android,
   não na do app, então tocar o ícone da tela inicial logo depois de reiniciar dava tela preta. Agora o
   service worker responde à navegação com uma página de resgate ("Acordando o Hermes") e se recarrega no

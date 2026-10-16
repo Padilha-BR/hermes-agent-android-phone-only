@@ -107,6 +107,32 @@ for nome in JetBrainsMono-Regular JetBrainsMono-Bold; do
   fi
 done
 
+echo "== shebangs (Android 17 parou de reescrever /usr/bin/env)"
+# Até o Android 16 o `termux-exec` reescrevia `#!/usr/bin/env python3` para o env
+# do Termux. No Android 17 isso PAROU: o script morre com
+#   bad interpreter: No such file or directory
+# mesmo existindo, executável, com o interpretador instalado — o erro aponta
+# para o lugar errado e custa tempo. Aqui o shebang passa a apontar para o env
+# do próprio Termux.
+# Roda SEMPRE, e não só quando um arquivo acabou de ser copiado: correção presa
+# ao ramo de "instalação nova" nunca roda em quem ATUALIZA o aparelho, e o
+# defeito sobrevive à atualização sem ninguém perceber.
+PREFIXO="${PREFIX:-/data/data/com.termux/files/usr}"
+consertados=0
+for f in "$H/bin"/* "$H/scripts"/*; do
+  [ -f "$f" ] || continue
+  head -1 "$f" 2>/dev/null | grep -qE '^#!/(usr/)?bin/env ' || continue
+  if [ "$DRY" = 1 ]; then echo "  consertaria o shebang de $f"; continue; fi
+  if sed -i "1s|^#![^[:space:]]*/env |#!$PREFIXO/bin/env |" "$f"; then
+    echo "  $f"
+    consertados=$((consertados+1))
+  else
+    echo "  FALHA no shebang de $f"
+    falhas=$((falhas+1))
+  fi
+done
+[ "$consertados" -eq 0 ] && echo "  (todos já apontavam para o env do Termux)"
+
 echo "== ~/.shortcuts (Termux:Widget)"
 for f in scripts/shortcuts/*.sh; do
   [ -f "$f" ] || continue
@@ -129,7 +155,7 @@ if [ "$BASHRC" = 1 ]; then
 fi
 
 echo
-echo "instalados: $copiados  ·  já iguais: $iguais  ·  falhas: $falhas"
+echo "instalados: $copiados  ·  já iguais: $iguais  ·  shebangs corrigidos: $consertados  ·  falhas: $falhas"
 [ "$DRY" = 1 ] && exit 0
 
 # o que NÃO está no repo e o resto do sistema procura (só avisa)

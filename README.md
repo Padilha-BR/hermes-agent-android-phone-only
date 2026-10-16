@@ -227,8 +227,9 @@ knowing before you blame your own setup:
 - **`termux-exec` stopped rewriting the `/usr/bin/env` shebang.** A script whose first line is
   `#!/usr/bin/env …` now dies with `bad interpreter: No such file or directory`. It hides well: a
   launcher that only checks the file exists keeps passing. The workaround is to call the script through
-  `sys.executable`, or to point the shebang at `$PREFIX/bin/env` — the sibling repo's installer does
-  the latter, idempotently, for the udocker binary.
+  `sys.executable`, or to point the shebang at `$PREFIX/bin/env` — which is what `install.sh` in this
+  repo does to every script it installs, **on every run**, including on a phone that already had them
+  (the sibling repo's installer does the same for the udocker binary).
 - **The app can be opened before the surfaces exist.** `Termux:Boot` runs on Android's schedule, not the
   app's, so tapping the home-screen icon right after a reboot used to give a black screen. The service
   worker now answers navigation with a rescue page ("Acordando o Hermes" — waking Hermes) and reloads

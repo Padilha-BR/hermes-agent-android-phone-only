@@ -619,6 +619,27 @@
     selectPaths: (options) => escolherArquivos(options),
     selectSavePath: async () => null,
 
+    // ── download de arquivo da conversa ──────────────────────────────────
+    // O botão de download (card de anexo, menu do arquivo) chama isto e lê
+    // `.saved` da resposta. Sem esta implementação a ponte caía no stub
+    // inerte, devolvia null e o app estourava com
+    // "Cannot read properties of null (reading 'saved')".
+    // Aqui não existe diálogo "Salvar como": o arquivo vai para o Download
+    // compartilhado do aparelho e o app recebe o caminho de volta.
+    saveGatewayFile: async (opcoes) => {
+      const o = opcoes || {};
+      const caminho = o.path || o.caminho || '';
+      const r = await fetch('/__save-file', {
+        method: 'POST',
+        headers: cabecalhoLocal({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ path: caminho, name: o.suggestedName || o.name || '' })
+      });
+      const d = await r.json().catch(() => null);
+      if (d && d.saved) { log('download salvo em', d.saved); return d; }
+      throw new Error((d && d.erro) || ('HTTP ' + r.status));
+    },
+
+
     // ── anexos: caminho de verdade em troca dos bytes ─────────────────────
     // saveImageBuffer é o caminho de "colar/dropar imagem"; sem ele o app
     // recebia um objeto do stub e criava um anexo com caminho inválido.

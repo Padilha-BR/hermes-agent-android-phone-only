@@ -784,6 +784,75 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(json.dumps({"ok": True, "path": str(destino)}).encode(),
                           "application/json")
 
+    def _save_file(self, data) -> None:
+        """Salva no aparelho um arquivo que a UI está baixando.
+
+        Por que existe: o botão de download (card de anexo, menu do arquivo)
+        chama `window.hermesDesktop.saveGatewayFile(...)` e lê `.saved` da
+        resposta. No Electron isso é o diálogo "Salvar como"; no navegador não
+        existe diálogo nenhum, a ponte caía no stub inerte, devolvia `null` e a
+        UI estourava com "Cannot read properties of null (reading 'saved')".
+
+        O destino é o Download compartilhado do Android (`~/storage/downloads`,
+        que o app de arquivos e o Chrome enxergam); sem o storage configurado
+        (termux-setup-storage), cai para `~/downloads-hermes`.
+
+        Exige o token da sessão, como as outras rotas que gravam em disco.
+        """
+        pedido = str(data.get("path") or "").strip()
+        if not pedido:
+            return self._json({"ok": False, "erro": "sem path"}, 400)
+        origem: Path
+        if re.match(r"^https?://", pedido, re.I):
+            try:
+                with urllib.request.urlopen(pedido, timeout=30) as resp:
+                    conteudo = resp.read(LIMITE_ANEXO + 1)
+            except Exception as exc:  # rede, 404 do gateway, TLS…
+                return self._json({"ok": False, "erro": f"download falhou: {exc}"}, 502)
+            if len(conteudo) > LIMITE_ANEXO:
+                return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
+            origem = Path(unquote(urlparse(pedido).path))
+        else:
+            if pedido.startswith("file://"):
+                pedido = unquote(urlparse(pedido).path)
+            try:
+                origem = (Path(pedido) if Path(pedido).is_absolute() else (HOME / pedido)).resolve()
+                origem.relative_to(HOME.resolve())
+            except ValueError:
+                return self._json({"ok": False, "erro": "fora de $HOME"}, 403)
+            except OSError:
+                return self._json({"ok": False, "erro": "caminho invalido"}, 400)
+            if not origem.is_file():
+                return self._json({"ok": False, "erro": "nao existe"}, 404)
+            try:
+                if origem.stat().st_size > LIMITE_ANEXO:
+                    return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
+                conteudo = origem.read_bytes()
+            except OSError as exc:
+                return self._json({"ok": False, "erro": str(exc)}, 500)
+        # nome: o que o app sugeriu; sem ele, o nome de origem. Sem barra e sem
+        # NUL (um nome com "/" escreveria fora da pasta escolhida).
+        bruto = str(data.get("name") or data.get("suggestedName") or "").strip()
+        nome = re.sub(r"[/\\\x00]", "_", bruto) or origem.name or "arquivo"
+        for pasta in (HOME / "storage" / "downloads", HOME / "downloads-hermes"):
+            try:
+                pasta.mkdir(parents=True, exist_ok=True)
+                if not os.access(pasta, os.W_OK):
+                    continue
+                destino = pasta / nome
+                if destino.exists():
+                    # não sobrescreve o que já está lá (pode ser o arquivo que
+                    # ele acabou de baixar); marca a hora em vez de perder
+                    destino = pasta / f"{Path(nome).stem}-{time.strftime('%H%M%S')}{Path(nome).suffix}"
+                gravar_atomico(destino, conteudo)
+            except OSError as exc:
+                log(f"[download] {pasta} falhou: {exc}")
+                continue
+            log(f"[download] {len(conteudo)} bytes → {destino}")
+            return self._json({"ok": True, "saved": str(destino), "path": str(destino),
+                               "name": destino.name, "bytes": len(conteudo)})
+        return self._json({"ok": False, "erro": "sem pasta gravavel"}, 500)
+
     def _servir_arquivo(self, q) -> None:
         """Serve um arquivo do aparelho para a página (miniatura/preview).
 
@@ -922,7 +991,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._bump()
         if path == "/__cmd":
             return self._cmd(post=True)
-        if path in ("/__zoom", "/__save-text", "/__upload"):
+        if path in ("/__zoom", "/__save-text", "/__save-file", "/__upload"):
             # gravam em disco: mesma origem (anti-CSRF de página aberta no Chrome)
             # E token da sessão (outro app do aparelho também alcança o loopback)
             if not self._origem_ok():
@@ -942,6 +1011,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._zoom(data)
             if path == "/__save-text":
                 return self._save_text(data)
+            if path == "/__save-file":
+                return self._save_file(data)
             return self._upload(data)
         return self._send(b"{}", "application/json", 404)
 
