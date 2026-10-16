@@ -64,6 +64,8 @@ Detalhe, links e o que cada um faz de diferente: **[docs/00-prior-art.md](docs/0
 | Afirmação | Evidência |
 |---|---|
 | Renderer do desktop servido pelo telefone | `GET :8890/` → `<title>Hermes</title>` + token de sessão injetado + `__stubs.js` + `__shim.js` + `manifest.webmanifest` |
+| O app da tela inicial carrega a UI de verdade | WebAPK → `GET :8890/` → 3.385 nós no DOM, `window.hermesDesktop` presente, lista de sessões renderizada |
+| O app se cura em vez de ficar preto | `/__sw.js` intercepta **só a navegação**: com o injetor fora ele serve uma página "o servidor está subindo" e se recarrega quando `/__health` responde — na mesma aba, sem toque |
 | Superfície de chat nativa no ar | `GET :8891/` → 200 |
 | Dashboard saudável, sem login em loopback | `GET :9119/api/health` → `{"ok":true,"auth_required":false}` |
 | Dashboard é PWA de verdade | `GET :9119/manifest.webmanifest` → `200 application/manifest+json` |
@@ -84,8 +86,15 @@ Termux no telefone
 ├─ :9119  hermes dashboard   → dashboard oficial, com patch para virar PWA instalável
 ├─ :8890  desktop-ui/web      → renderer React de apps/desktop + ponte gerada
 ├─ :8891  chat nativo         → SPA falando o protocolo JSON-RPC/WebSocket do gateway
+├─ /__sw.js (service worker)  → página de resgate quando o injetor está fora, e se recarrega
+│                               sozinha quando ele responde; de propósito não guarda UI em cache
 └─ watchdog (PPid 1) + Termux:Boot → mantém as três de pé quando o Android suspende o Termux
 ```
+
+Para medir um **service worker** você precisa de um navegador que continue vivo entre comandos:
+`scripts/cdp-atual.py nav-js <url> '<expr>'` pilota o Chromium que já está no 9222, com perfil
+persistente. O `webcdp` não serve: ele sobe e mata um Chromium a cada chamada, então o worker não
+chega a instalar, e o `Runtime.evaluate` dele devolve `{}` para qualquer Promise.
 
 ## Pegada no aparelho
 
@@ -195,7 +204,13 @@ Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux
   melhora isso, não derrota isso.
 - **Sem voz local.** `faster-whisper → ctranslate2` não tem wheel para Android. Usamos o
   reconhecedor de fala do próprio sistema (doc 06).
-- **Sem Docker e sem automação de navegador local** dentro do Termux.
+- **Sem Docker de kernel, sem Playwright para Python.** Docker aqui é userspace (udocker + proot, e o
+  repo irmão vai mais longe); automação de navegador roda no Chromium nativo do Termux via CDP, e o
+  Playwright só pelo Node — `pip install playwright` não tem wheel para Android (doc 08).
+- **A página de resgate não é retroativa.** O service worker assume depois de uma carga com o
+  injetor de pé (justamente a carga que você faz ao instalar o app na tela inicial). Ele não guarda
+  UI em cache de propósito, então com o injetor fora a página de resgate é tudo o que ele pode
+  servir — e é esse o ponto.
 - **O caminho de instalação é Tier 2 no upstream** — commits no `main` podem quebrar. E a faixa de
   Python suportada é a que estiver no `pyproject.toml` naquele dia, não a das docs (doc 01).
 - **O port é um port, não é o Electron.** Terminal/PTY in-app, git nativo, diálogos de arquivo,
