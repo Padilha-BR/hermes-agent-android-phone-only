@@ -8,4 +8,5 @@ for name in rustc cargo maturin clang cc1; do
   done
 done
 echo "prioridade baixada em $n processos de build"
-free -m 2>/dev/null | awk 'NR==2 {printf "memoria: %s MB disponiveis\n", $4+$6}'
+# "available" é a 7ª coluna do free; $4+$6 (free+cache) superestimava
+free -m 2>/dev/null | awk 'NR==2 {printf "memoria: %s MB disponiveis\n", (NF >= 7 ? $7 : $4+$6)}'

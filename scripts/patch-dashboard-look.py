@@ -30,13 +30,18 @@ if not CSS.exists():
     print(f"AVISO: {CSS} nao existe — nada injetado (rode quando o CSS existir)")
     raise SystemExit(0)
 
-css = CSS.read_text(encoding="utf-8")
+# um "</style" dentro do CSS (comentário, string) fecharia o bloco antes da hora
+css = CSS.read_text(encoding="utf-8").replace("</style", "<\\/style")
 html = idx.read_text(encoding="utf-8")
 
 # remove bloco anterior (idempotência)
 if ABRE in html:
     ini = html.index(ABRE)
     fim = html.index(FECHA, ini) + len(FECHA)
+    # leva junto o "\n  " que a injeção põe antes do </head> — sem isso o
+    # arquivo crescia 4 bytes a cada execução do dashboard-up
+    if html.startswith("\n  ", fim):
+        fim += 3
     html = html[:ini] + html[fim:]
 
 bloco = f"{ABRE}\n/* gerado por patch-dashboard-look.py a partir de {CSS.name} */\n{css}\n{FECHA}"
@@ -45,5 +50,9 @@ if "</head>" in html:
 else:
     html = bloco + html
 
-idx.write_text(html, encoding="utf-8")
+# escrita atômica: o dashboard pode estar servindo este arquivo agora, e uma
+# escrita interrompida (OOM/kill no meio) deixava o index.html truncado
+tmp = idx.with_name(".index.html.tmp")
+tmp.write_text(html, encoding="utf-8")
+tmp.replace(idx)
 print(f"CSS de {CSS} injetado em {idx} ({len(css)} chars de CSS)")

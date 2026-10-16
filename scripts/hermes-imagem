@@ -1,28 +1,41 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # hermes-imagem — escolher foto do celular com miniatura (popup igual app) e
 # mandar direto pro Hermes, já com a imagem anexada.
+# O seletor (hermes-picker.py) exige um token por execução: ele o grava em
+# state/picker-token (0600) ao subir e este script abre a URL com ?t=<token>.
+# O seletor encerra sozinho depois da escolha (ou ocioso), não fica residente.
 PORT="${HERMES_PICKER_PORT:-8898}"
 URL="http://127.0.0.1:$PORT"
 H="$HOME/.hermes"
 QUEUE="$H/state/picker-queue.json"
+TOKFILE="$H/state/picker-token"
 LOG="$H/logs/picker.log"
 mkdir -p "$H/state" "$H/logs"
 
 up() { curl -s -o /dev/null --max-time 3 "$URL/health"; }
 
-if ! up; then
-  setsid nohup "$H/bin/hermes-picker.py" >>"$LOG" 2>&1 </dev/null &
-  for _ in $(seq 1 15); do sleep 1; up && break; done
+# seletor de versão antiga (sem token) ainda residente: derruba antes de subir o novo
+if up && [ ! -s "$TOKFILE" ]; then
+  pkill -f 'hermes-picker\.py' 2>/dev/null
+  sleep 1
 fi
 if ! up; then
+  # token que sobrou de um seletor morto (SIGKILL não roda o finally): apaga antes
+  # de subir, senão o laço abaixo aceitaria o arquivo velho
+  rm -f "$TOKFILE"
+  setsid nohup "$H/bin/hermes-picker.py" >>"$LOG" 2>&1 </dev/null &
+  for _ in $(seq 1 15); do sleep 1; up && [ -s "$TOKFILE" ] && break; done
+fi
+TOK=$(cat "$TOKFILE" 2>/dev/null)
+if ! up || [ -z "$TOK" ]; then
   echo "Nao consegui subir o seletor de fotos. Veja $LOG"
   exit 1
 fi
 
-# limpa escolha anterior
-python -c "import os;p=os.path.expanduser('$QUEUE');os.path.exists(p) and os.remove(p)" 2>/dev/null
+# limpa escolha anterior (caminho passado como argumento, nunca colado no código)
+python -c 'import os,sys;p=sys.argv[1];os.path.exists(p) and os.remove(p)' "$QUEUE" 2>/dev/null
 
-am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+am start -a android.intent.action.VIEW -d "$URL/?t=$TOK" >/dev/null 2>&1
 echo "Abri o seletor de fotos no navegador."
 echo "Toque nas fotos, escreva a pergunta (opcional) e toque em 'Mandar (N)'."
 echo "Aguardando sua escolha..."
@@ -37,10 +50,17 @@ if [ ! -f "$QUEUE" ]; then
   exit 1
 fi
 
-IMG=$(python -c "import json;d=json.load(open('$QUEUE'));print(d['paths'][0] if d.get('paths') else '')" 2>/dev/null)
-PERGUNTA=$(python -c "import json;d=json.load(open('$QUEUE'));print(d.get('question','').strip())" 2>/dev/null)
-EXTRAS=$(python -c "import json;d=json.load(open('$QUEUE'));print(', '.join(d['paths'][1:]))" 2>/dev/null)
-python -c "import os;p='$QUEUE';os.path.exists(p) and os.remove(p)" 2>/dev/null
+# $QUEUE vai como argv: interpolado dentro do código Python, um caminho com
+# aspa quebrava (ou injetava) o script
+ler() { python -c 'import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+p=d.get("paths") or []
+c=sys.argv[2]
+print(p[0] if c=="img" and p else d.get("question","").strip() if c=="q" else ", ".join(p[1:]) if c=="extras" else "")' "$QUEUE" "$1" 2>/dev/null; }
+IMG=$(ler img)
+PERGUNTA=$(ler q)
+EXTRAS=$(ler extras)
+python -c 'import os,sys;p=sys.argv[1];os.path.exists(p) and os.remove(p)' "$QUEUE" 2>/dev/null
 
 if [ -z "$IMG" ]; then
   echo "A escolha chegou vazia. Tente de novo."

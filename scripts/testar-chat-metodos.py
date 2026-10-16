@@ -3,6 +3,14 @@
 session.list, session.history, session.activate, image.attach.
 
 Assim o app não estreia com parâmetro errado na frente do usuário.
+
+ATENÇÃO: roda contra o backend REAL — cria uma sessão nova que fica no
+histórico e (se pedido) anexa uma imagem a ela. Por isso só roda com
+confirmação explícita, e a imagem é opt-in (nada de pegar a 1ª foto da câmera).
+
+Uso:  HERMES_TESTE_CONFIRMO=1 testar-chat-metodos.py
+      HERMES_TESTE_CONFIRMO=1 FOTO=~/teste.jpg testar-chat-metodos.py
+      HERMES_BACKEND=http://127.0.0.1:9119 (padrão)
 """
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ from pathlib import Path
 
 import websockets
 
-BACKEND = "http://127.0.0.1:9119"
+BACKEND = os.environ.get("HERMES_BACKEND", "http://127.0.0.1:9119")
 
 
 def token() -> str:
@@ -28,6 +36,10 @@ def token() -> str:
 
 
 async def main() -> int:
+    if os.environ.get("HERMES_TESTE_CONFIRMO") != "1":
+        print("este teste cria uma sessão no histórico REAL do Hermes.")
+        print("rode com HERMES_TESTE_CONFIRMO=1 para confirmar (FOTO=<arquivo> testa image.attach)")
+        return 2
     tok = token()
     url = BACKEND.replace("http", "ws") + "/api/ws?token=" + tok
     seq = 0
@@ -63,38 +75,39 @@ async def main() -> int:
 
         if sessoes:
             alvo = sessoes[0].get("resolved_id") or sessoes[0].get("id")
-            print("  título da 1ª:", (sessoes[0].get("title") or "")[:60])
             print("  id salvo:", alvo, "| resolved_id:", sessoes[0].get("resolved_id"))
             # session.resume é o método que ABRE uma conversa salva (activate/history exigem sessão viva)
             rr = await rpc("session.resume", {"session_id": alvo, "source": "desktop"})
-            print("  RAW resume:", json.dumps(rr)[:700])
+            # só a FORMA da resposta: o conteúdo é conversa privada do usuário
+            print("  resume → campos:", sorted((rr.get("result") or {}).keys())[:12] or rr.get("error"))
             rr_res = rr.get("result") or {}
             vivo = rr_res.get("session_id") or rr_res.get("live_session_id")
             msgs_res = rr_res.get("messages") or []
             print("  id vivo:", vivo, "| mensagens no resume:", len(msgs_res))
             if msgs_res:
-                print("  exemplo:", msgs_res[0].get("role"), str(msgs_res[0].get("content"))[:60])
+                print("  exemplo role:", msgs_res[0].get("role"))
             r = await rpc("session.history", {"session_id": vivo}) if vivo else {"result": {}}
             h = r.get("result") or {}
             msgs = h.get("messages") or []
             print(f"session.history → {h.get('count')} mensagens; campos:",
                   sorted(msgs[0].keys())[:8] if msgs else "(vazio)")
             if msgs:
-                print("  exemplo role/content:", msgs[0].get("role"), str(msgs[0].get("content"))[:60])
+                print("  exemplo role:", msgs[0].get("role"))
 
         r = await rpc("session.activate", {"session_id": sid})
         print("session.activate →", json.dumps(r.get("result") or r.get("error"))[:160])
 
-        # image.attach com uma foto real do aparelho
-        fotos = sorted((Path.home() / "storage/dcim/Camera").glob("*.jpg"))
-        if fotos:
-            r = await rpc("image.attach", {"session_id": sid, "path": str(fotos[0])})
+        # image.attach só com a imagem que o usuário apontou (FOTO=...)
+        foto = Path(os.path.expanduser(os.environ.get("FOTO", ""))) if os.environ.get("FOTO") else None
+        if foto and foto.is_file():
+            r = await rpc("image.attach", {"session_id": sid, "path": str(foto.resolve())})
             print("image.attach →", json.dumps(r.get("result") or r.get("error"))[:200])
         else:
-            print("image.attach → (sem foto para testar)")
+            print("image.attach → pulado (passe FOTO=<arquivo> para testar)")
 
         r = await rpc("session.interrupt", {"session_id": sid})
         print("session.interrupt →", json.dumps(r.get("result") or r.get("error"))[:120])
+    print(f"obs.: a sessão de teste {sid} ficou no histórico — apague pela UI se quiser")
     return 0
 
 

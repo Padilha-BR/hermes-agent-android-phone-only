@@ -10,23 +10,27 @@ percebe que "a fonte do app mudou". Rode este script depois de cada rebuild.
 Uso:
     python scripts/gerar-fontes-embutidas.py [dir-do-bundle] [saida.css]
 
-Padroes: bundle = ~/hermes-agent/.hermes-port/renderer
+Padroes: bundle = $HERMES_DESKTOP_WEB ou ~/hermes-agent/.hermes-port/renderer
          saida  = ~/.hermes/desktop-fonts.css
 """
 from __future__ import annotations
 
 import base64
+import os
 import pathlib
+import re
 import sys
 
-BUNDLE = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else (
-    pathlib.Path.home() / "hermes-agent" / ".hermes-port" / "renderer")
+BUNDLE = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get(
+    "HERMES_DESKTOP_WEB", str(pathlib.Path.home() / "hermes-agent" / ".hermes-port" / "renderer")))
 SAIDA = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else (
     pathlib.Path.home() / ".hermes" / "desktop-fonts.css")
 
-# (familia CSS, prefixo do arquivo sem hash, peso, estilo)
+# (familia CSS, nome do arquivo SEM o hash, peso, estilo). O nome é exato: com
+# prefixo solto ("Collapse") o glob casava Collapse-Black e Collapse-Bold e o
+# sorted()[0] escolhia o peso errado.
 FAMILIAS = [
-    ("Collapse", "Collapse", 700, "normal"),
+    ("Collapse", "Collapse-Bold", 700, "normal"),
     ("JetBrains Mono", "JetBrainsMono-Regular", 400, "normal"),
     ("JetBrains Mono", "JetBrainsMono-Italic", 400, "italic"),
     ("JetBrains Mono", "JetBrainsMono-Bold", 700, "normal"),
@@ -49,10 +53,16 @@ cabecalho = (
 regras = [cabecalho]
 faltando: list[str] = []
 for familia, prefixo, peso, estilo in FAMILIAS:
-    achados = sorted(assets.glob(prefixo + "*.woff2"))
+    # `<nome>-<hash de 8>.woff2` (hash do Vite: base64url) — nada entre o nome e o hash
+    exato = re.compile(re.escape(prefixo) + r"-[A-Za-z0-9_-]{8}\.woff2$")
+    achados = [p for p in assets.glob(prefixo + "-*.woff2") if exato.match(p.name)]
     if not achados:
         faltando.append(prefixo)
         continue
+    # sobra de build anterior: fica com o mais novo, mas avisa
+    achados.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if len(achados) > 1:
+        print(f"AVISO: {len(achados)} arquivos para {prefixo}: usando o mais novo ({achados[0].name})")
     arquivo = achados[0]
     b64 = base64.b64encode(arquivo.read_bytes()).decode()
     regras.append(

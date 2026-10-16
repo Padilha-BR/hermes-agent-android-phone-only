@@ -13,6 +13,44 @@
 
   const log = (...a) => { try { console.info('[shim]', ...a); } catch (e) {} };
 
+  // Rotas locais do injetor que gravam/leem disco (/__upload, /__save-text,
+  // /__zoom, /__resolver-pasta, /__file) exigem o token da sessão: o loopback é
+  // alcançável por qualquer app do aparelho, e só a página servida o conhece.
+  const cabecalhoLocal = (extra) => Object.assign({ 'X-Hermes-Session-Token': TOKEN }, extra || {});
+
+  // ── token obsoleto ───────────────────────────────────────────────────────
+  // O token da sessão é lido UMA vez do HTML; quando o watchdog reinicia o
+  // dashboard ele muda e o app ficava tentando com o velho para sempre. O
+  // injetor expõe /__token (mesma origem): se o token mudou, recarrega a página
+  // (o HTML novo já vem com o token certo). No máximo uma checagem a cada 30 s.
+  let checandoToken = false, ultimaChecagem = 0;
+  async function conferirToken() {
+    if (checandoToken || Date.now() - ultimaChecagem < 30000) return;
+    checandoToken = true; ultimaChecagem = Date.now();
+    try {
+      const r = await fetch('/__token', { cache: 'no-store', credentials: 'same-origin' });
+      if (!r.ok) return; // backend ainda fora (503) ou injetor antigo (404)
+      const j = await r.json();
+      if (j && j.token && j.token !== TOKEN) { log('token do backend mudou → recarregando'); location.reload(); }
+    } catch (e) {} finally { checandoToken = false; }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) conferirToken(); });
+  // o WebSocket do gateway é aberto pelo próprio app (não passa pela ponte):
+  // uma subclasse só observa o `close` do /api/ws para disparar a checagem.
+  try {
+    const WS0 = window.WebSocket;
+    if (WS0) {
+      window.WebSocket = class extends WS0 {
+        constructor(url, protocolos) {
+          super(url, protocolos);
+          if (String(url).indexOf('/api/ws') !== -1) {
+            this.addEventListener('close', () => setTimeout(conferirToken, 2000));
+          }
+        }
+      };
+    }
+  } catch (e) {}
+
   const descriptor = () => ({
     baseUrl: BACKEND,
     token: TOKEN,
@@ -57,6 +95,7 @@
     const timer = req.timeoutMs ? setTimeout(() => ctrl.abort(), req.timeoutMs) : null;
     try {
       const res = await fetch(BACKEND + path, { method, headers, body, signal: ctrl.signal, credentials: 'omit' });
+      if (res.status === 401 || res.status === 403) conferirToken();
       if (!res.ok) {
         let detail = '';
         try { detail = (await res.text()).slice(0, 300); } catch (e) {}
@@ -150,10 +189,11 @@
 
   async function enviarBytes(bytes, ext, nome) {
     const r = await fetch('/__upload', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST', headers: cabecalhoLocal({ 'content-type': 'application/json' }),
       body: JSON.stringify({ name: nome || '', ext: ext || '', data_b64: b64DeBytes(bytes) })
     });
     if (!r.ok) {
+      if (r.status === 403) conferirToken();   // backend reiniciou: token novo
       let detalhe = '';
       try { detalhe = (await r.text()).slice(0, 200); } catch (e) {}
       throw new Error('nao salvei o anexo (' + r.status + ') ' + detalhe);
@@ -183,7 +223,7 @@
     if (texto === null || !String(texto).trim()) return [];
     try {
       const r = await fetch('/__resolver-pasta?nome=' + encodeURIComponent(String(texto).trim()) +
-                            '&base=' + encodeURIComponent(base));
+                            '&base=' + encodeURIComponent(base), { headers: cabecalhoLocal() });
       const j = await r.json();
       if (j && j.path) return [j.path];
       const cands = (j && j.candidatos) || [];
@@ -203,6 +243,11 @@
       log('escolherPasta falhou: ' + ((e && e.message) || e));
       return [];
     }
+  }
+
+  async function escolherPastaDeTrabalho() {
+    const [dir] = await escolherPasta({ title: 'Pasta de trabalho' });
+    return { canceled: !dir, dir: dir || null };
   }
 
   function escolherArquivos(opcoes) {
@@ -387,7 +432,7 @@
       // avisa o servidor para o PRÓXIMO carregamento já nascer no tamanho certo
       try {
         fetch('/__zoom', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
+          method: 'POST', headers: cabecalhoLocal({ 'content-type': 'application/json' }),
           body: JSON.stringify({ width: alvo }), keepalive: true
         }).catch(() => {});
       } catch (e) {}
@@ -401,7 +446,36 @@
   const noopAsync = async () => {};
   const falseAsync = async () => false;
 
-  const bridge = Object.assign(
+  // openExternal: só http(s) e sem window.opener. Antes aceitava qualquer esquema
+  // (javascript:, intent:, file:) vindo do app/markdown e a aba nova podia
+  // navegar esta (reverse tabnabbing).
+  const abrirFora = (url) => {
+    try {
+      const u = new URL(String(url), location.href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        window.open(u.href, '_blank', 'noopener,noreferrer');
+      } else {
+        console.warn('[shim] openExternal recusou esquema ' + u.protocol);
+      }
+    } catch (e) {}
+    return noopAsync();
+  };
+
+  // merge PROFUNDO: com Object.assign raso, um objeto do shim (git, terminal,
+  // windowControls…) substituía o objeto gerado INTEIRO e os métodos do contrato
+  // que eu não reescrevi sumiam — TypeError "is not a function", justamente o que
+  // o gerador existe para evitar (o Proxy lá embaixo só cobre o 1º nível).
+  // Só objetos literais se mesclam; função, null e array substituem.
+  const literal = (v) => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+  const mesclar = (base, por) => {
+    const out = literal(base) ? Object.assign({}, base) : {};
+    Object.keys(por).forEach((k) => {
+      out[k] = literal(out[k]) && literal(por[k]) ? mesclar(out[k], por[k]) : por[k];
+    });
+    return out;
+  };
+
+  const bridge = mesclar(
     // base: TODA a superfície do contrato (gerada de global.d.ts por gerar-shim-stubs.py).
     // Sem isso, cada chave ausente virava stub e quebrava o app de formas diferentes.
     (typeof window !== 'undefined' && window.__HERMES_STUBS__) || {},
@@ -474,12 +548,10 @@
       onRequest: () => () => {},
       capture: async () => ({ ok: false })
     },
-    // store/quick-entry.ts:516 — janela de Quick Entry é só-Electron.
+    // store/quick-entry.ts:516 — janela de Quick Entry é só-Electron. O resto do
+    // contrato (getSettings, submit, dismiss, onShown…) vem dos stubs pelo merge.
     quickEntry: {
-      onSubmit: () => () => {},
-      onDismiss: () => () => {},
-      hide: async () => ({ ok: false }),
-      show: async () => ({ ok: false })
+      onSubmit: () => () => {}
     },
     onWindowStateChanged: () => () => {},
     onDeepLink: () => () => {},
@@ -487,29 +559,26 @@
     getMachineProfile: async () => ({ os: 'android', arch: 'arm64', platform: 'android', cpus: 8 }),
     logLine: noop,
     revealLogs: noopAsync,
-    openExternal: (url) => { try { window.open(url, '_blank'); } catch (e) {} return noopAsync(); },
-    dataUrlReadMaxLegacy: 0,
+    openExternal: abrirFora,
     updates: {
-      check: async () => ({ ok: false }), apply: noopAsync, onEvent: () => () => {},
+      check: async () => ({ ok: false }), apply: noopAsync,
       // store/updates.ts:1345 chama isto SEM ?. — o main do Electron sempre expõe.
       onProgress: () => () => {}
     },
-    windowControls: { minimize: noop, maximize: noop, close: noop, isMaximized: falseAsync, onMaximizedChanged: () => () => {} },
-    themes: { list: async () => [], install: noopAsync, remove: noopAsync, onChanged: () => () => {} },
+    // nomes do CONTRATO (global.d.ts): os antigos maximize/kill/status/diff/
+    // branches/worktrees não existem lá — o app chamava toggleMaximize/dispose/
+    // repoStatus… e caía no objeto do shim sem eles. themes (fetchMarketplace,
+    // searchMarketplace) fica só com os stubs: a forma de retorno não é conhecida.
+    windowControls: { custom: false, minimize: noopAsync, toggleMaximize: noopAsync, close: noopAsync },
     // superfícies só-Electron: presentes mas inertes, para nunca dar TypeError
     terminal: {
-      start: noopAsync, attach: noopAsync, write: noop, resize: noop, cwd: async () => null,
-      onData: () => () => {}, onExit: () => () => {}, list: async () => [], kill: noopAsync
+      start: noopAsync, attach: noopAsync, write: noopAsync, resize: noopAsync, cwd: async () => null,
+      onData: () => () => {}, onExit: () => () => {}, dispose: noopAsync
     },
     git: {
-      status: async () => null, diff: async () => '', branches: async () => [],
-      worktrees: async () => [], isRepo: falseAsync
+      repoStatus: async () => null, fileDiff: async () => '', branchList: async () => [],
+      worktreeList: async () => []
     },
-    selectPaths: async () => [],
-    selectSavePath: async () => null,
-    readDir: async () => [],
-    readFileText: async () => '',
-    readFileDataUrl: async () => null,
     openDir: noopAsync,
     revealPath: noopAsync,
     findInPage: async () => ({ count: 0 }),
@@ -536,13 +605,15 @@
     // Colocar pasta a partir da ponte: era só "pasta não dá". Agora pergunta o
     // caminho e confere (mesmo caminho de escolherPasta) — é isto que alimenta
     // "Folder…" do menu, "mudar workspace" e "adicionar projeto".
-    pickDefaultProjectDir: async () => {
-      const [dir] = await escolherPasta({ title: 'Pasta de trabalho' });
-      return { canceled: !dir, dir: dir || null };
+    // No CONTRATO (global.d.ts) pickDefaultProjectDir mora em `settings`; a cópia
+    // no 1º nível fica por compatibilidade com quem já chamava por ali.
+    pickDefaultProjectDir: () => escolherPastaDeTrabalho(),
+    // literal simples: o merge PROFUNDO acima preserva setDefaultProjectDir e o
+    // resto dos stubs de `settings` (o Object.assign com os stubs era redundante)
+    settings: {
+      getDefaultProjectDir: async () => ({ dir: '/data/data/com.termux/files/home' }),
+      pickDefaultProjectDir: () => escolherPastaDeTrabalho()
     },
-    settings: Object.assign({}, ((window.__HERMES_STUBS__ || {}).settings) || {}, {
-      getDefaultProjectDir: async () => ({ dir: '/data/data/com.termux/files/home' })
-    }),
     readDir: async () => [],
     readFileText: async () => '',
     selectPaths: (options) => escolherArquivos(options),
@@ -560,7 +631,8 @@
 
     // ── área de transferência: FUNCIONAL (era no-op silencioso) ────────────
     readClipboard: () => lerClipboard(),
-    writeClipboard: (texto) => escreverClipboard(texto),
+    // o app pode mandar a string ou {text}: String({text}) copiaria "[object Object]"
+    writeClipboard: (t) => escreverClipboard((t && typeof t === 'object' && 'text' in t) ? t.text : t),
 
     // Colar um texto MUITO grande vira anexo .txt (igual ao desktop). Só entra
     // em jogo acima do limite de paste inline; se o servidor falhar, devolve
@@ -568,7 +640,7 @@
     savePastedText: async (texto) => {
       try {
         const r = await fetch('/__save-text', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
+          method: 'POST', headers: cabecalhoLocal({ 'content-type': 'application/json' }),
           body: JSON.stringify({ text: String(texto || '') })
         });
         if (!r.ok) return null;

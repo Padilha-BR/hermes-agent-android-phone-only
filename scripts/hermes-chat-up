@@ -44,9 +44,11 @@ fi
 curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
 
 cd "$HOME" || exit 1
-# telemetria do injetor fica DESLIGADA por padrão (HERMES_WEB_TELEMETRIA=1 só pra depurar)
+# chat: sem remendos do desktop e sem telemetria (o texto da página seria a
+# CONVERSA no log), mesmo que a shell tenha HERMES_WEB_TELEMETRY/…TELEMETRIA exportado
 HERMES_DESKTOP_WEB="$APP" HERMES_DESKTOP_WEB_PORT="$PORT" \
 HERMES_WEB_LOG="$H/logs/chat-telemetria.log" \
+HERMES_WEB_DESKTOP_FIXES=0 HERMES_WEB_TELEMETRY=0 HERMES_WEB_TELEMETRIA=0 \
   setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
 for _ in $(seq 1 15); do
   sleep 1

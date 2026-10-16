@@ -20,7 +20,7 @@ Isso funciona muito bem — até parar. E ele para por dois motivos, ambos com c
 | Script | Papel |
 |---|---|
 | [`dashboard-up.sh`](../scripts/dashboard-up.sh) | Idempotente: se `/api/health` responde, sai. Senão sobe com `--skip-build` (rápido, ~10s), **reaplica o patch PWA se faltar** e, se o skip falhar, cai para build completo. |
-| [`dashboard-watchdog.sh`](../scripts/dashboard-watchdog.sh) | Laço de 60s chamando `dashboard-up.sh`, com guarda de instância única por pidfile, segurando `termux-wake-lock`. |
+| [`dashboard-watchdog.sh`](../scripts/dashboard-watchdog.sh) | Laço de 60s chamando `dashboard-up.sh`, com guarda de instância única por `flock` (pidfile pid+starttime como reserva), backoff quando o `dashboard-up.sh` falha, segurando `termux-wake-lock`. Instalado em `~/.hermes/scripts/` pelo `install.sh` — é de lá que ele roda. |
 | `~/.termux/boot/10-hermes-dashboard.sh` | Termux:Boot: `sleep 20` e então o watchdog. **Um único** script de boot — scripts duplicados disputam a mesma porta; neutralize os antigos (`mv` para fora do diretório + `chmod -x`). |
 
 ## As três regras que valem a pena
@@ -30,7 +30,7 @@ Isso funciona muito bem — até parar. E ele para por dois motivos, ambos com c
   Hermes, ele morre quando a sessão acaba. Confirme:
 
   ```bash
-  grep PPid /proc/$(cat ~/.hermes/state/dashboard-watchdog.pid)/status
+  grep PPid /proc/$(cut -d' ' -f1 ~/.hermes/state/dashboard-watchdog.pid)/status   # pidfile = "pid starttime"
   # PPid: 1        ← medido hoje, é isso que se quer
   ```
 

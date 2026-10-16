@@ -60,11 +60,14 @@ cd "$HOME" || exit 1
 # Valor fica em state/desktop-web-viewport (mude com `hermes-desktop-zoom` OU
 # pelo controle Ajustes → Aparência → escala da UI, dentro do próprio app).
 VIEWPORT="${HERMES_WEB_VIEWPORT_WIDTH:-$(cat "$H/state/desktop-web-viewport" 2>/dev/null || echo 900)}"
+# HERMES_WEB_DESKTOP_FIXES=1: os remendos do porte (trim, matchMedia, reset de
+# layout) são deste app; explícito para valer mesmo fora da porta 8890.
 # Largura que o shim trata como "100%" na escala da UI do app. NÃO mude para
 # "consertar" o tamanho: isso remapeia os presets (90…175%) do app.
 BASE_WIDTH="${HERMES_WEB_BASE_WIDTH:-800}"
 HERMES_DESKTOP_WEB="$BUNDLE" HERMES_WEB_VIEWPORT_WIDTH="$VIEWPORT" HERMES_WEB_BASE_WIDTH="$BASE_WIDTH" \
   HERMES_WEB_EXTRA_CSS="$H/desktop-fonts.css,$H/desktop-port.css" \
+  HERMES_WEB_DESKTOP_FIXES=1 \
   setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
 for _ in $(seq 1 15); do
   sleep 1

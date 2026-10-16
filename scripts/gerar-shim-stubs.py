@@ -7,18 +7,25 @@ Motivo: caçar método faltante por método faltante era lento e frágil — cad
 "X is not a function". Aqui a lista sai do contrato, não da minha memória.
 
 Saída: ~/.hermes/bin/shim-stubs.js  (define window.__HERMES_STUBS__)
-Uso:   gerar-shim-stubs.py [caminho/global.d.ts]
+Uso:   gerar-shim-stubs.py [caminho/global.d.ts] [saida.js]
 """
 from __future__ import annotations
 
 import json
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 
 DTS = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else (
     pathlib.Path.home() / "hermes-agent" / "apps" / "desktop" / "src" / "global.d.ts")
-SAIDA = pathlib.Path.home() / ".hermes" / "bin" / "shim-stubs.js"
+SAIDA = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else (
+    pathlib.Path.home() / ".hermes" / "bin" / "shim-stubs.js")
+
+# membro do bloco: propriedade `nome: Tipo` OU método `nome(a: T): R` (os dois
+# com `?` opcional). A forma de método era ignorada e a chave sumia dos stubs.
+MEMBRO = re.compile(r"^\s*([A-Za-z_$][\w$]*)\??\s*(:|\()\s*(.*)$")
 
 texto = DTS.read_text(encoding="utf-8")
 
@@ -49,9 +56,8 @@ def membros(src: str, nivel: int = 0) -> list[tuple[str, str]]:
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     src = re.sub(r"//[^\n]*", "", src)
     linhas = src.split("\n")
-    # descobre a indentação dos membros: a menor indentação de uma linha `nome:`
-    indentacoes = [len(l) - len(l.lstrip()) for l in linhas
-                   if re.match(r"^\s*[A-Za-z_$][\w$]*\??\s*:", l)]
+    # descobre a indentação dos membros: a menor indentação de `nome:` / `nome(`
+    indentacoes = [len(l) - len(l.lstrip()) for l in linhas if MEMBRO.match(l)]
     if not indentacoes:
         return []
     alvo = min(indentacoes)
@@ -61,15 +67,21 @@ def membros(src: str, nivel: int = 0) -> list[tuple[str, str]]:
     while i < len(linhas):
         l = linhas[i]
         ind = len(l) - len(l.lstrip())
-        m2 = re.match(r"^\s*([A-Za-z_$][\w$]*)\??\s*:\s*(.*)$", l)
+        m2 = MEMBRO.match(l)
         if ind != alvo or not m2:
             i += 1
             continue
-        nome, resto = m2.group(1), m2.group(2)
+        nome, resto = m2.group(1), m2.group(3)
         if nome in vistos:
             i += 1
             continue
         vistos.add(nome)
+        if m2.group(2) == "(":
+            # método: vira tipo de função ("(a: T): R") — as linhas seguintes de
+            # uma assinatura quebrada estão mais indentadas e são puladas acima
+            saida.append((nome, "(" + resto.strip().rstrip(";")))
+            i += 1
+            continue
         if resto.strip().startswith("{"):
             # objeto aninhado: consome até fechar, com aninhamento por chaves
             prof = 0
@@ -134,6 +146,20 @@ saida = (
     "// NÃO editar à mão: rode o gerador de novo quando o contrato mudar.\n"
     "window.__HERMES_STUBS__ = {\n" + corpo + "\n}\n"
 )
-SAIDA.write_text(saida, encoding="utf-8")
+SAIDA.parent.mkdir(parents=True, exist_ok=True)  # instalação nova: ~/.hermes/bin pode não existir
+tmp = SAIDA.with_name(".tmp-" + SAIDA.name)  # termina em .js: o node --check exige
+tmp.write_text(saida, encoding="utf-8")
+# o arquivo vira <script> na página: JS inválido derrubaria a ponte inteira.
+# Confere ANTES de trocar o que está em uso.
+if shutil.which("node"):
+    r = subprocess.run(["node", "--check", str(tmp)], capture_output=True, text=True)
+    if r.returncode != 0:
+        tmp.unlink()
+        print("FALHA: o JS gerado nao passou no node --check; mantive o arquivo anterior")
+        print(r.stderr.strip()[:600])
+        raise SystemExit(1)
+else:
+    print("AVISO: node fora do PATH — sintaxe do JS gerado NAO conferida")
+tmp.replace(SAIDA)
 print(f"{len(itens)} chaves geradas → {SAIDA}")
 print("amostra:", ", ".join(n for n, _ in itens[:14]))

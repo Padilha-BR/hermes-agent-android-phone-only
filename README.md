@@ -123,17 +123,27 @@ pkg install -y clang rust make pkg-config libffi openssl openssl-tool binutils c
 # python comes from the Termux main repo (3.14) — prebuilt wheels exist for cryptography/lxml/numpy/pillow
 
 # 3. clone + venv + install, with the Rust profile overrides that turn 40 minutes into 4
+#    (the scripts were verified against upstream commit 311155f — pin it if a newer main breaks them)
 git clone https://github.com/NousResearch/hermes-agent.git && cd hermes-agent
+# git checkout 311155f   # optional pin
 python -m venv --system-site-packages venv && source venv/bin/activate
 export ANDROID_API_LEVEL="$(getprop ro.build.version.sdk)"
 export CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_BUILD_JOBS=8
 python -m pip install -U pip setuptools wheel && python -m pip install -e '.[termux]'
 
-# 4. bring the surfaces up
-hermes dashboard --skip-build --no-open      # :9119
-bash scripts/dashboard-watchdog.sh &         # keeps it up, detached
+# 4. install this repo's scripts where they expect to live (idempotent; re-run after git pull)
+cd ~ && git clone https://github.com/Padilha-BR/hermes-agent-android-phone-only.git
+bash hermes-agent-android-phone-only/install.sh --bashrc
+#    → ~/.hermes/{bin,scripts,chat}, ~/.shortcuts (Termux:Widget), ~/.termux/boot (Termux:Boot)
+
+# 5. bring the surfaces up
+hermes dashboard --skip-build --no-open                 # :9119
+setsid ~/.hermes/scripts/dashboard-watchdog.sh &        # keeps it up, detached
 ```
 
+The watchdog must run from `~/.hermes/scripts/` (it calls its siblings there), not from the clone.
+A few artifacts are deliberately **not** in this repo (the PWA patch and icons, the desktop CSS,
+the chat fonts) — `install.sh` lists what is missing and `scripts/README.md` says what each one is.
 Then read the docs in order. Nothing in `scripts/` contains credentials; paths are Termux's fixed prefix.
 
 ## Docs
@@ -168,9 +178,15 @@ Docs are in Portuguese (they are our working notes); this README and doc 00's ta
   no token, no hostname and no external address.
 - **No personal data.** No names, no accounts, no device serials, no network addresses — only the
   generic loopback address and configurable port numbers.
-- **Android's own caveat:** anything else running on the phone can reach loopback too. That is
-  Android's app model, not something this setup changes — but it is why you should treat the phone
-  itself as the security boundary, not the port.
+- **Loopback is not a trust boundary on Android.** Three things reach these ports besides you:
+  web pages open in the phone's Chrome (a plain GET is a CSRF), DNS rebinding (a domain that starts
+  resolving to `127.0.0.1`) and any other app with the INTERNET permission. The local servers
+  therefore answer **403** to any `Host` other than `127.0.0.1:<port>`/`localhost:<port>`, refuse
+  cross-site `Origin`/`Sec-Fetch-Site` on state-changing routes, keep the JS-eval operator channel
+  (`/__cmd`) **off by default** and behind a token file (`0600`), give the photo picker a per-run
+  token, and keep the debug telemetry (which can capture page text) opt-in. Against another local
+  app only a secret helps — which is why those two tokens exist; the session token in the HTML is
+  still readable by anything that can load the page, so treat the phone itself as the boundary.
 
 ## Honest limitations
 
@@ -187,7 +203,8 @@ Docs are in Portuguese (they are our working notes); this README and doc 00's ta
 - **Two surfaces beat one.** If all you want is a good chat on the phone, the native WebSocket surface
   (doc 04) is less work than porting the desktop UI. We run both.
 - We did **not** upstream anything; the scripts are ours, unversioned against upstream internals, and
-  they read `hermes_cli/web_dist` and `apps/desktop/dist` — paths that upstream can move.
+  they read `hermes_cli/web_dist` and build the desktop renderer into `.hermes-port/renderer` from
+  `apps/desktop` — paths and internals that upstream can move (pin commit 311155f if in doubt).
 
 ## Credits
 

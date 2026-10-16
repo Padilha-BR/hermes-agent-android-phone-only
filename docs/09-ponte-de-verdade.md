@@ -179,9 +179,16 @@ Sem ver a tela, e sem depender do usuário para testar:
 - **Estado que só existe em uso real**: em vez de provocar um turno (que sujaria a sessão do
   usuário), o botão é **clonado** na DOM com o outro `aria-label` e medido. Valida o seletor sem
   disparar nada.
-- **A página viva do aparelho**: o injetor tem um canal de operação (`GET /__cmd?js=…&token=…`) que
-  executa leitura na página aberta e devolve o resultado no log — é por onde se confere, no aparelho
-  real, que os botões medem o que deveriam. **Enquanto o app está em segundo plano o Chrome congela a
+- **A página viva do aparelho**: o injetor tem um canal de operação (`/__cmd`) que executa leitura na
+  página aberta e devolve o resultado no log — é por onde se confere, no aparelho real, que os botões
+  medem o que deveriam. Ele vem **desligado**: suba o injetor com `HERMES_DESKTOP_CMD=1` (por exemplo
+  `HERMES_DESKTOP_CMD=1 hermes-desktop-up` com a 8890 parada), o que grava o segredo em
+  `~/.hermes/state/desktop-cmd-token` (0600); dali em diante ele liga sozinho enquanto o arquivo
+  existir. Chame por POST, com o segredo no header (fora da URL e do log):
+  `curl -s http://127.0.0.1:8890/__cmd -H 'content-type: application/json'
+  -H "X-Hermes-Cmd-Token: $(cat ~/.hermes/state/desktop-cmd-token)" -d '{"js":"document.title"}'`.
+  Os medidores CDP abaixo **não** precisam dele: dirigem a própria página, que já tem o token da
+  sessão e a mesma origem. **Enquanto o app está em segundo plano o Chrome congela a
   aba**: o socket do SSE continua aberto e o comando é "entregue", mas nada executa. Meça com o app na
   frente.
 - Os medidores usados estão em `scripts/`: `eval-port.py`, `medir-ui-port.py`, `medir-texto-port.py`,

@@ -124,17 +124,27 @@ pkg install -y clang rust make pkg-config libffi openssl openssl-tool binutils c
 # o python vem do repo principal do Termux (3.14) — existem wheels prontos para cryptography/lxml/numpy/pillow
 
 # 3. clone + venv + install, com os overrides de perfil Rust que viram 40 minutos em 4
+#    (os scripts foram verificados contra o commit 311155f do upstream — fixe-o se um main novo quebrar)
 git clone https://github.com/NousResearch/hermes-agent.git && cd hermes-agent
+# git checkout 311155f   # fixação opcional
 python -m venv --system-site-packages venv && source venv/bin/activate
 export ANDROID_API_LEVEL="$(getprop ro.build.version.sdk)"
 export CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_BUILD_JOBS=8
 python -m pip install -U pip setuptools wheel && python -m pip install -e '.[termux]'
 
-# 4. suba as superfícies
-hermes dashboard --skip-build --no-open      # :9119
-bash scripts/dashboard-watchdog.sh &         # mantém de pé, desgarrado
+# 4. instale os scripts deste repositório onde eles esperam estar (idempotente; rode de novo após git pull)
+cd ~ && git clone https://github.com/Padilha-BR/hermes-agent-android-phone-only.git
+bash hermes-agent-android-phone-only/install.sh --bashrc
+#    → ~/.hermes/{bin,scripts,chat}, ~/.shortcuts (Termux:Widget), ~/.termux/boot (Termux:Boot)
+
+# 5. suba as superfícies
+hermes dashboard --skip-build --no-open                 # :9119
+setsid ~/.hermes/scripts/dashboard-watchdog.sh &        # mantém de pé, desgarrado
 ```
 
+O watchdog tem que rodar de `~/.hermes/scripts/` (ele chama os vizinhos de lá), não do clone.
+Alguns artefatos **não** estão no repositório de propósito (patch e ícones do PWA, CSS do desktop,
+fontes do chat) — o `install.sh` lista o que falta e o `scripts/README.md` diz o que é cada um.
 Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux.
 
 ## Documentos
@@ -167,9 +177,16 @@ Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux
   referencia chave, token, hostname nem endereço externo.
 - **Nenhum dado pessoal.** Sem nomes, contas, número de série de aparelho ou endereço de rede — só o
   endereço genérico de loopback e números de porta configuráveis.
-- **Ressalva do próprio Android:** qualquer outro app rodando no telefone também alcança o loopback.
-  É o modelo do Android, não algo que esta configuração mude — mas é por isso que a fronteira de
-  segurança é o aparelho, não a porta.
+- **Loopback não é fronteira de confiança no Android.** Além de você, três coisas alcançam estas
+  portas: páginas abertas no Chrome do próprio celular (um GET simples já é CSRF), DNS rebinding (um
+  domínio que passa a resolver para `127.0.0.1`) e qualquer outro app com a permissão INTERNET. Por
+  isso os servidores locais respondem **403** a `Host` que não seja `127.0.0.1:<porta>`/
+  `localhost:<porta>`, recusam `Origin`/`Sec-Fetch-Site` de outro site nas rotas que mudam estado,
+  mantêm o canal de operação que executa JS (`/__cmd`) **desligado por padrão** e atrás de um token
+  em arquivo (`0600`), dão ao seletor de fotos um token por execução e deixam a telemetria de
+  depuração (que pode capturar texto da página) como opt-in. Contra outro app local só segredo
+  ajuda — é para isso que esses dois tokens existem; o token de sessão no HTML continua legível por
+  quem conseguir carregar a página, então a fronteira de segurança é o aparelho, não a porta.
 
 ## Limitações honestas
 
@@ -187,7 +204,8 @@ Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux
 - **Duas superfícies é melhor que uma.** Se você só quer um chat bom no celular, a superfície
   nativa por WebSocket (doc 04) dá menos trabalho que portar a UI do desktop. A gente usa as duas.
 - **Não subimos nada para o upstream.** Os scripts são nossos, sem versionamento contra internals,
-  e leem `hermes_cli/web_dist` e `apps/desktop/dist` — caminhos que o upstream pode mover.
+  leem `hermes_cli/web_dist` e buildam o renderer do desktop em `.hermes-port/renderer` a partir
+  de `apps/desktop` — caminhos e internals que o upstream pode mover (na dúvida, fixe o 311155f).
 
 ## Créditos
 
