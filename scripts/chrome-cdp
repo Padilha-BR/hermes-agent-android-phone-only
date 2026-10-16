@@ -1,0 +1,107 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# chrome-cdp — mantém um Chromium NATIVO (Termux) com CDP em 127.0.0.1:$PORT.
+# É o motor do browser_exec do Hermes neste celular: o Hermes não empacota Chromium
+# para arm64-android, então apontamos browser.cdp_url para este endpoint.
+#
+#   chrome-cdp up      sobe se não estiver no ar (idempotente)
+#   chrome-cdp down    derruba a árvore inteira
+#   chrome-cdp status  saúde + nº de alvos
+#   chrome-cdp restart
+#
+# Perfil persistente (cookies/logins sobrevivem a restart) em $HOME/.hermes/browser-cdp
+set -u
+export PATH=/data/data/com.termux/files/usr/bin:$PATH
+
+PORT="${CHROME_CDP_PORT:-9222}"
+PROFILE="${CHROME_CDP_PROFILE:-$HOME/.hermes/browser-cdp}"
+LOGDIR="$HOME/.hermes/logs"
+LOG="$LOGDIR/chrome-cdp.log"
+PIDFILE="$HOME/.hermes/state/chrome-cdp.pid"
+BIN="${CHROME_BIN:-$PREFIX/bin/chromium-browser}"
+# UA de Chrome normal: o UA padrao do headless ("HeadlessChrome") faz Google/DDG
+# devolverem pagina de captcha ("trafego incomum"). Medido 15/10/2026.
+CHROME_UA="${CHROME_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36}"
+
+mkdir -p "$PROFILE" "$LOGDIR" "$HOME/.hermes/state"
+
+health() {  # imprime o JSON de /json/version quando vivo
+  curl -s --max-time 4 "http://127.0.0.1:$PORT/json/version" 2>/dev/null
+}
+
+alive() { [ -n "$(health)" ]; }
+
+up() {
+  if alive; then
+    echo "chrome-cdp: já no ar em 127.0.0.1:$PORT (pid $(pgrep -f "remote-debugging-port=$PORT" 2>/dev/null | head -1))"
+    return 0
+  fi
+  echo "$(date '+%F %T') up: subindo chromium headless porta $PORT" >>"$LOG"
+  setsid nohup "$BIN" \
+    --headless=new \
+    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-port="$PORT" \
+    --user-data-dir="$PROFILE" \
+    --user-agent="$CHROME_UA" \
+    --window-size=1280,900 \
+    --no-first-run --no-default-browser-check --noerrdialogs \
+    --disable-background-networking --disable-component-update --disable-default-apps \
+    --disable-sync --disable-features=Translate --disable-gpu \
+    about:blank >>"$LOG" 2>&1 </dev/null &
+  echo $! >"$PIDFILE"
+  # espera até 25s o endpoint responder
+  for _ in $(seq 1 25); do
+    sleep 1
+    if alive; then
+      echo "chrome-cdp: no ar em 127.0.0.1:$PORT (pid $(cat "$PIDFILE"))"
+      return 0
+    fi
+  done
+  echo "chrome-cdp: FALHOU ao subir em 25s — ver $LOG" >&2
+  tail -20 "$LOG" >&2
+  return 1
+}
+
+down() {
+  local pids
+  pids=$(pgrep -f "user-data-dir=$PROFILE" 2>/dev/null)
+  if [ -z "$pids" ]; then
+    pids=$(pgrep -f "remote-debugging-port=$PORT" 2>/dev/null)
+  fi
+  if [ -z "$pids" ]; then
+    echo "chrome-cdp: nada rodando"
+    rm -f "$PIDFILE"
+    return 0
+  fi
+  echo "chrome-cdp: derrubando $(echo "$pids" | wc -l) processos"
+  kill $pids 2>/dev/null
+  sleep 2
+  pids=$(pgrep -f "user-data-dir=$PROFILE" 2>/dev/null)
+  [ -n "$pids" ] && kill -9 $pids 2>/dev/null
+  rm -f "$PIDFILE"
+  echo "chrome-cdp: parado"
+}
+
+status() {
+  local v
+  v=$(health)
+  if [ -z "$v" ]; then
+    echo "chrome-cdp: MORTO (porta $PORT sem resposta)"
+    return 1
+  fi
+  echo "chrome-cdp: VIVO em 127.0.0.1:$PORT"
+  echo "$v" | tr -d '\n' | sed 's/  */ /g'
+  echo
+  local n
+  n=$(curl -s --max-time 4 "http://127.0.0.1:$PORT/json/list" 2>/dev/null | grep -c '"type": "page"')
+  echo "abas (type=page): ${n:-0}"
+  echo "perfil: $PROFILE"
+  echo "ram do chromium: $(ps -eo rss,args 2>/dev/null | grep -i '[c]hromium\|[c]hrome --' | awk '{s+=$1} END {printf "%.0f MB\n", s/1024}')"
+}
+
+case "${1:-status}" in
+  up) up ;;
+  down) down ;;
+  restart) down; up ;;
+  status) status ;;
+  *) echo "uso: chrome-cdp {up|down|restart|status}" >&2; exit 2 ;;
+esac

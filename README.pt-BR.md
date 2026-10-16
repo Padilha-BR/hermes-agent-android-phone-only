@@ -150,6 +150,7 @@ Nada em `scripts/` contém credencial; os caminhos são o prefixo fixo do Termux
 | 06 | [Operação só com o celular](docs/06-operacao-so-com-o-celular.md) | Teclado de tela sem Ctrl, ditado grátis, widgets, mandar foto pro agente. |
 | 07 | [E isso abre porta para um app Android nativo?](docs/07-porta-para-app-android.md) | O que o upstream já resolve (wheels Android, pipeline de retag, gates de plataforma), por que a UI é separável, os bloqueios reais (Play Store, foreground service, armazenamento com escopo) e os três caminhos com preço. |
 | 08 | [Como o agente abre uma página](docs/08-browser-no-android.md) | As três rotas por custo (HTTP puro ganha na maioria), por que nenhum Chromium roda em container aqui, de quem é o navegador na porta 9222, e como a *API* do Playwright funciona — por Node, com as duas chaves que ela exige. |
+| 09 | [O que a ponte precisa implementar de verdade](docs/09-ponte-de-verdade.md) | As seis coisas que pareciam prontas e eram decorativas (anexo, escolher pasta, microfone, transcrição, o divisor no dedo, o teclado virtual): por que o navegador entrega **bytes** onde o Electron entregava **caminho**, as armadilhas que mais custaram (um `cancel` que dispara na hora no teste, um rótulo que muda com o estado do botão, um alvo alargado que roubou o botão vizinho) e os medidores usados para provar cada conserto. |
 
 ## Segurança e privacidade
 
