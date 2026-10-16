@@ -1,9 +1,12 @@
 # scripts/ — o que é cada arquivo
 
 Estes são os scripts que rodam **no telefone**, em `~/.hermes/` (o `HERMES_HOME` do Termux).
-Copiar para lá é a instalação: `~/.hermes/bin/` vai no `PATH` pelo `~/.bashrc` e
-`~/.hermes/scripts/` é chamado pelo watchdog. Nada aqui contém credencial — chaves ficam no
-arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
+A instalação é o `install.sh` da raiz (idempotente — rode de novo depois de cada `git pull`):
+`.sh`/`.mjs` → `~/.hermes/scripts/` (chamados pelo watchdog), comandos/`.py`/shims →
+`~/.hermes/bin/` (no `PATH` pelo `~/.bashrc`; `install.sh --bashrc` acrescenta a linha),
+`chat/` → `~/.hermes/chat/`, `shortcuts/` → `~/.shortcuts/` e `10-hermes-dashboard.sh` →
+`~/.termux/boot/`. Arquivo trocado vira `<arquivo>.bak`. Nada aqui contém credencial — chaves
+ficam no arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 
 > `$PREFIX/bin` é protegido para escrita pelo agente no Termux: escreva o script em
 > `~/.hermes/bin` e crie o link com `ln -s`, senão a escrita é recusada.
@@ -53,8 +56,8 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 
 | Arquivo | O que faz |
 |---|---|
-| `dashboard-up.sh` | Idempotente. Se `/api/health` responde, sai. Senão sobe o dashboard com `--skip-build`, **reaplica o patch PWA** se faltar e cai para build completo se o skip falhar. |
-| `dashboard-watchdog.sh` | Laço de 60 s chamando `dashboard-up.sh`, guarda de instância única por pidfile (pid + starttime, imune a reuso de PID), segurando `termux-wake-lock` — e o devolvendo no trap de saída. Rode-o desgarrado (`setsid`) para ele virar PPid 1 e sobreviver à sessão do agente. |
+| `dashboard-up.sh` | Idempotente. Se `/api/health` responde, sai. Senão sobe o dashboard com `--skip-build`, **reaplica o patch PWA** se faltar e cai para build completo se o skip falhar. Serializado por `flock` (`state/dashboard-up.lock`): watchdog e widget não se atropelam mais. Build completo que falha entra em backoff (5→10→20→40 min, teto 1 h, estado em `state/dashboard-build-falhas`); `HERMES_FORCE_BUILD=1` ignora o backoff. |
+| `dashboard-watchdog.sh` | Laço de 60 s chamando `dashboard-up.sh`, guarda de instância única por `flock` (`state/dashboard-watchdog.lock`) com o pidfile (pid + starttime) como reserva e para reconhecer um watchdog da versão anterior, segurando `termux-wake-lock` — e o devolvendo no trap de saída. Quando o `dashboard-up.sh` falha, espaça as tentativas (2→4→8→15 min). Também mantém a UI do desktop (8890) e o chat (8891). Rode-o desgarrado (`setsid`) para ele virar PPid 1 e sobreviver à sessão do agente. |
 | `10-hermes-dashboard.sh` | Script de boot (`~/.termux/boot/`, via app **Termux:Boot**): espera 20 s e sobe o watchdog. **Um só** script de boot — duplicados disputam a mesma porta. |
 | `hermes-app` | Garante que o dashboard (9119) esteja no ar e abre a tela clicável. |
 | `hermes-desktop-web.py` | O injetor: servidor stdlib que serve um SPA local e injeta (a) o token da sessão, (b) o shim da ponte, (c) captura de erro (+ telemetria de DOM, opt-in) em `~/.hermes/logs/desktop-web.log`, (d) canal **SSE** `/__events` — um POST (ou GET) em `/__bump` empurra `location.reload()` para as páginas abertas, o que funciona com a aba em segundo plano (o Chrome congela `setInterval` de aba inativa), (e) `/__token`, que devolve o token **atual** do backend para a página se recuperar quando o dashboard reinicia. Reutilizável: `HERMES_DESKTOP_WEB=<dir> HERMES_DESKTOP_WEB_PORT=<porta>` serve qualquer SPA local; uma página que traga `<meta http-equiv="Content-Security-Policy">` com `__HERMES_NONCE__` recebe nonce novo por resposta (é o caso do chat). |
@@ -68,9 +71,9 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 
 | Arquivo | O que faz |
 |---|---|
-| `gerar-shim-stubs.py` | **A peça que destravou tudo.** Lê o contrato de tipos (`apps/desktop/src/global.d.ts`) e gera `shim-stubs.js` com a superfície inteira da ponte em stubs inertes do tipo certo (~160 chaves). É a fonte da superfície — mexeu na ponte, rode o gerador de novo. |
+| `gerar-shim-stubs.py` | **A peça que destravou tudo.** Lê o contrato de tipos (`apps/desktop/src/global.d.ts`) e gera `shim-stubs.js` com a superfície inteira da ponte em stubs inertes do tipo certo (~160 chaves) — membros em forma de propriedade (`nome: T`) e de método (`nome(a): R`). Valida o resultado com `node --check` antes de trocar o arquivo em uso. É a fonte da superfície — mexeu na ponte, rode o gerador de novo. |
 | `shim-stubs.js` | Gerado (não edite à mão). Base inerte do `window.hermesDesktop`. |
-| `shim-desktop.js` | A ponte de verdade: base gerada + implementações reais (REST com `X-Hermes-Session-Token`, WebSocket com `?token=`, clipboard, `Notification`, no-ops seguros para o que é Electron-only). |
+| `shim-desktop.js` | A ponte de verdade: base gerada + implementações reais, **mescladas em profundidade** (um objeto do shim não apaga mais os métodos gerados do mesmo grupo). REST com `X-Hermes-Session-Token`, WebSocket com `?token=`, clipboard de verdade (`navigator.clipboard`), `openExternal` só para `http(s):` com `noopener`, renovação do token via `/__token` quando o backend reinicia; notificações ficam no-op (devolvem `true`) e o resto que é Electron-only também. Os nomes seguem o contrato (`windowControls.toggleMaximize`, `git.repoStatus`…). |
 | `validar-injecao.py` | Formata o template da injeção **fora** do servidor e roda `node --check` no JS resultante. Pega o `%` literal (tipo `left:50%`) que faz o servidor fechar a conexão sem resposta e sem traceback — o que parece "servidor morto" e não bug de template. |
 | `gerar-fontes-embutidas.py` | Regenera o CSS com as fontes do bundle em data URI. Rodar **depois de cada rebuild**, porque o hash do arquivo muda. |
 | `patch-dashboard-look.py` | Injeta o bloco `<style id="hermes-desktop-look">` (CSS da cara de desktop) no `index.html` do dashboard. O PWA de verdade (manifesto, ícones, tags) é o `patch_dashboard_pwa.py`, que fica em `~/hermes-app/` (fora do repo) e é chamado pelo `dashboard-up.sh`. |
@@ -88,7 +91,7 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 | Arquivo | O que faz |
 |---|---|
 | `phone-health.sh [--prune]` | Resume tudo: orçamento de memória, skills ativas/estacionadas, dashboard + watchdog, wake lock, espaço, compilações acidentais e rotação de logs. |
-| `skills-restore.sh` | Devolve as skills estacionadas de `~/.hermes/skills-parked/` para `skills/`. |
+| `skills-restore.sh` | Devolve as skills estacionadas de `~/.hermes/skills-parked/` para `skills/`, em qualquer profundidade (subcategorias inclusive). Não sobrescreve skill que já existe no destino (avisa e sai 1). |
 
 ## Comandos de uso no dia a dia
 
@@ -99,11 +102,26 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 | `hermes-calm` (alias `hcalm`) | `renice 19` em rustc/cargo/maturin quando um build trava o aparelho. **Não mata nada** — devolveu ~3 GB de RAM disponível na hora. |
 | `hermes-falar` | Ditado grátis: `termux-speech-to-text` (voz do próprio Android) → `hermes-mobile -z "<texto>"`. |
 | `hermes-imagem` | Popup de miniaturas das fotos do celular + pergunta, e manda pro Hermes com a imagem anexada. |
-| `hermes-picker.py` | O servidor do popup acima (stdlib + Pillow, 127.0.0.1:8898, filtro por pasta). |
+| `hermes-picker.py` | O servidor do popup acima (stdlib + Pillow, 127.0.0.1:8898, filtro por pasta). Cada execução gera um token (`state/picker-token`, 0600) que toda rota exige (`?t=`; o `hermes-imagem` já abre a URL com ele); a escolha é um POST JSON. Sai sozinho depois da escolha ou após `HERMES_PICKER_IDLE` segundos parado (padrão 900). |
+
+## O que não está no repositório
+
+O resto do sistema procura estes arquivos, mas eles ficam fora do repo (o `install.sh` avisa
+quais faltam). Sem eles tudo sobe; só a parte correspondente fica de fora.
+
+| Arquivo | Quem usa | Sem ele |
+|---|---|---|
+| `~/hermes-app/patch_dashboard_pwa.py`, `icon-192.png`, `icon-512.png` | `dashboard-up.sh` (PWA do dashboard) | o dashboard funciona, mas não instala como app |
+| `~/.hermes/desktop-look.css` | `patch-dashboard-look.py` via `dashboard-up.sh` | o dashboard fica com a cara original |
+| `~/.hermes/desktop-port.css` | `hermes-desktop-up` (`HERMES_WEB_EXTRA_CSS`) | a UI do desktop fica sem os ajustes de layout para o celular |
+| `~/.hermes/desktop-fonts.css` | idem — gerado por `gerar-fontes-embutidas.py` depois de cada build | wordmark e código caem na fonte do sistema |
+| `~/.hermes/chat/fonts/JetBrainsMono-{Regular,Bold}.woff2` | `chat/index.html` | o `install.sh` copia do bundle do desktop se achar; senão o chat usa a mono do sistema |
 
 ## `shortcuts/`
 
-Os scripts de botão da tela inicial (app **Termux:Widget** copia para `~/.shortcuts/`).
+Os scripts de botão da tela inicial (app **Termux:Widget** copia para `~/.shortcuts/`; o
+`install.sh` já faz isso). O widget **não** lê o `~/.bashrc`: cada atalho exporta o `PATH`
+(`~/.hermes/bin`, venv do Hermes, `$PREFIX/bin`) e chama os comandos por caminho absoluto.
 Cada um roda com o Termux em primeiro plano — o que é justamente o que faz
 `termux-open-url` funcionar (em segundo plano o Android bloqueia lançamento de atividade e o
 comando sai com exit 0 sem abrir nada).
