@@ -60,7 +60,7 @@ paginas() {
 }
 
 abrir() {
-  local antes agora i pkg sub out abriu
+  local antes agora pkg sub out abriu
   pkg=$(webapk_da_porta) || pkg=""
   if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)" != "200" ]; then
     echo "servidor $URL fora do ar — subindo..."

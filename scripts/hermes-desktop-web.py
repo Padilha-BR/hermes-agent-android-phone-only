@@ -344,7 +344,7 @@ const __TELEMETRIA__ = %(telemetria)s;
           const e = todos[i];
           const r = e.getBoundingClientRect();
           const cs = getComputedStyle(e);
-          pedacos.push((e.tagName || '?').toLowerCase() + '.' + String(e.className).split(/\s+/).slice(0, 2).join('.') +
+          pedacos.push((e.tagName || '?').toLowerCase() + '.' + String(e.className).split(/\\s+/).slice(0, 2).join('.') +
             '[x=' + Math.round(r.x) + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) +
             ' pos=' + cs.position + ' tr=' + cs.transform.slice(0, 26) + ']');
         }
