@@ -10,17 +10,9 @@ mkdir -p "$H/logs"
 
 [ -f "$APP/index.html" ] || { echo "app de chat ainda nao existe em $APP"; exit 1; }
 
-if ! curl -s -o /dev/null --max-time 3 "$URL/__health"; then
-  # chat: sem remendos do desktop e sem telemetria de DOM (seria texto da conversa
-  # no log), mesmo que a shell tenha HERMES_WEB_TELEMETRY exportado
-  HERMES_DESKTOP_WEB="$APP" HERMES_DESKTOP_WEB_PORT="$PORT" \
-  HERMES_WEB_LOG="$H/logs/chat-telemetria.log" \
-  HERMES_WEB_DESKTOP_FIXES=0 HERMES_WEB_TELEMETRY=0 \
-    setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
-  for _ in $(seq 1 15); do sleep 1; curl -s -o /dev/null --max-time 3 "$URL/__health" && break; done
-fi
-
-curl -s -o /dev/null --max-time 3 "$URL/__health" || { echo "nao subiu — veja $LOG"; exit 1; }
+# o servidor (8891) é subido pelo hermes-chat-up — o mesmo que o vigia usa, com a
+# guarda contra injetor duplicado e sem remendos/telemetria do desktop
+"$H/bin/hermes-chat-up" || { echo "nao subiu — veja $LOG"; exit 1; }
 
 echo "Chat do Hermes no ar: $URL"
 echo -n "$URL" | termux-clipboard-set 2>/dev/null

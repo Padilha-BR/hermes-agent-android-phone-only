@@ -54,6 +54,8 @@ VALORES = {
     "backend": '"http://127.0.0.1:9119"',
     "token": '"token-de-teste"',
     "flags": '{"telemetria": true, "dom": true, "desktop": true, "cmd": true}',
+    "base_w": "800",
+    "telemetria": "true",
 }
 try:
     injecao = template % VALORES

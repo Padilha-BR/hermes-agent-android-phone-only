@@ -10,15 +10,62 @@ mkdir -p "$H/logs"
 
 [ -f "$BUNDLE/index.html" ] || { echo "bundle ausente em $BUNDLE"; exit 1; }
 
+# Guarda contra subir DOIS injetores na mesma porta: o vigia também chama este
+# script a cada 60s e a corrida criava processo duplicado (que morria no bind).
+ja_rodando() {
+  python3 - "$PORT" <<'PY'
+import pathlib, sys
+port = sys.argv[1]
+for d in pathlib.Path('/proc').iterdir():
+    if not d.name.isdigit():
+        continue
+    try:
+        cmd = (d / 'cmdline').read_bytes().decode('utf-8', 'replace')
+        argv0 = cmd.split('\0')[0]
+        # exigir o interpretador evita casar com uma SHELL cuja linha de comando
+        # cite o nome do script (foi um falso positivo real na inspeção)
+        if 'hermes-desktop-web.py' not in cmd or 'python' not in argv0:
+            continue
+        env = (d / 'environ').read_bytes().decode('utf-8', 'replace')
+    except Exception:
+        continue
+    p = next((kv.split('=', 1)[1] for kv in env.split('\0') if kv.startswith('HERMES_DESKTOP_WEB_PORT=')), '8890')
+    if p == port:
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+if ja_rodando; then
+  for _ in $(seq 1 8); do
+    sleep 1
+    curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+  done
+fi
+
+# Higiene de log (roda a cada ciclo do vigia, 60s). Trunca NO LUGAR, nunca com `mv`:
+# o injetor escreve com o fd aberto em O_APPEND, e um mv mandaria os writes pro inode
+# antigo — o log "some" e o disco não libera. Nada de log virando bola de neve.
+for f in desktop-web.log desktop-web-server.log chat-server.log chat-telemetria.log; do
+  a="$H/logs/$f"
+  [ -f "$a" ] || continue
+  if [ "$(wc -c <"$a" 2>/dev/null || echo 0)" -gt 800000 ]; then
+    tail -c 150000 "$a" > "$a.tmp" && cat "$a.tmp" > "$a" && rm -f "$a.tmp"
+  fi
+done
+
 curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
 
 cd "$HOME" || exit 1
 # tamanho da viewport: o Chrome encolhe a UI pra caber, então MENOR = texto MAIOR.
-# Valor fica em state/desktop-web-viewport (mude com `hermes-desktop-zoom`).
+# Valor fica em state/desktop-web-viewport (mude com `hermes-desktop-zoom` OU
+# pelo controle Ajustes → Aparência → escala da UI, dentro do próprio app).
 VIEWPORT="${HERMES_WEB_VIEWPORT_WIDTH:-$(cat "$H/state/desktop-web-viewport" 2>/dev/null || echo 900)}"
 # HERMES_WEB_DESKTOP_FIXES=1: os remendos do porte (trim, matchMedia, reset de
 # layout) são deste app; explícito para valer mesmo fora da porta 8890.
-HERMES_DESKTOP_WEB="$BUNDLE" HERMES_WEB_VIEWPORT_WIDTH="$VIEWPORT" \
+# Largura que o shim trata como "100%" na escala da UI do app. NÃO mude para
+# "consertar" o tamanho: isso remapeia os presets (90…175%) do app.
+BASE_WIDTH="${HERMES_WEB_BASE_WIDTH:-800}"
+HERMES_DESKTOP_WEB="$BUNDLE" HERMES_WEB_VIEWPORT_WIDTH="$VIEWPORT" HERMES_WEB_BASE_WIDTH="$BASE_WIDTH" \
   HERMES_WEB_EXTRA_CSS="$H/desktop-fonts.css,$H/desktop-port.css" \
   HERMES_WEB_DESKTOP_FIXES=1 \
   setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &

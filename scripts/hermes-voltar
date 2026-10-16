@@ -1,0 +1,84 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-voltar — devolve o Gabriel pro APP do Hermes que ele REALMENTE usa.
+#
+# Contexto (medido 15/10/2026): o "app do Hermes" da tela inicial dele é um
+# WebAPK do Chrome cujo startUrl é http://127.0.0.1:8890/ — a UI portada do app
+# DESKTOP. A porta 9119 é o dashboard/xterm (backend + terminal no navegador) e
+# abrir ela como "devolve a tela" joga o usuário numa ABA NOVA do Chrome, no
+# painel errado. Nunca faça isso.
+#
+# Uso:
+#   hermes-voltar           # abre o app (WebAPK) do Hermes
+#   hermes-voltar status    # mostra qual pacote/URL é considerado "o app"
+set -u
+PORT="${HERMES_DESKTOP_WEB_PORT:-8890}"
+URL="http://127.0.0.1:${PORT}"
+# Nome amigável (só pro status)
+APP_NOME="UI portada do desktop (${URL})"
+
+webapk_da_porta() {
+  # Devolve o pacote WebAPK cujo manifesto (startUrl/scope) aponta pra $PORT.
+  local p apk
+  for p in $(pm list packages 2>/dev/null | sed -n 's/^package:\(org\.chromium\.webapk\..*\)$/\1/p'); do
+    apk=$(pm path "$p" 2>/dev/null | sed -n 's/^package://p')
+    [ -n "$apk" ] || continue
+    if python3 - "$apk" "$PORT" <<'PY' 2>/dev/null
+import sys, zipfile
+apk, port = sys.argv[1], sys.argv[2]
+try:
+    raw = zipfile.ZipFile(apk).read('AndroidManifest.xml')
+except Exception:
+    sys.exit(1)
+txt = raw.decode('utf-16le', 'ignore') + raw.decode('latin1', 'ignore')
+sys.exit(0 if ('127.0.0.1:' + port) in txt else 1)
+PY
+    then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
+case "${1:-abrir}" in
+  status)
+    PKG=$(webapk_da_porta) || PKG=""
+    echo "app alvo : $APP_NOME"
+    echo "webapk   : ${PKG:-(nenhum WebAPK apontando pra essa porta)}"
+    H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)
+    echo "servidor : http=$H ($URL)"
+    ;;
+  abrir|"")
+    PKG=$(webapk_da_porta) || PKG=""
+    H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$URL/__health" 2>/dev/null)
+    if [ "$H" != "200" ]; then
+      echo "servidor $URL fora do ar (http=$H) — subindo..."
+      "$HOME/.hermes/bin/hermes-desktop-up" || exit 1
+    fi
+    if [ -n "$PKG" ]; then
+      # WebAPK NÃO resolve por MAIN/LAUNCHER com -p (dá "unable to resolve Intent"):
+      # o activity tem que ser EXPLÍCITO. Medido: a SplashActivity do shell abre e a
+      # página do app (8890) é carregada de verdade (GET / novo no log do injetor).
+      ABRIU=""
+      for SUB in \
+        org.chromium.webapk.shell_apk.h2o.SplashActivity \
+        org.chromium.webapk.shell_apk.h2o.H2OMainActivity \
+        org.chromium.webapk.shell_apk.MainActivity
+      do
+        OUT=$(am start -n "$PKG/$SUB" 2>&1)
+        case "$OUT" in
+          *"Error:"*|*"unable to resolve"*) continue ;;
+        esac
+        ABRIU="$SUB"; break
+      done
+      if [ -n "$ABRIU" ]; then
+        echo "App do Hermes aberto (pacote $PKG + $ABRIU -> $URL)."
+      else
+        echo "WebAPK $PKG achado mas nenhuma activity abriu — caindo pra URL."
+        am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+      fi
+    else
+      echo "Sem WebAPK pra $URL — abrindo a URL no navegador (pode vir aba nova)."
+      am start -a android.intent.action.VIEW -d "$URL" >/dev/null 2>&1
+    fi
+    ;;
+  *)
+    echo "uso: hermes-voltar [abrir|status]"; exit 2 ;;
+esac
