@@ -350,21 +350,30 @@ def _vigia_ociosidade(srv: ThreadingHTTPServer) -> None:
             return
 
 
+def _apagar_meu_token() -> None:
+    try:
+        if TOKEN_ARQ.read_text(encoding="utf-8").strip() == TOKEN:
+            TOKEN_ARQ.unlink()
+    except OSError:
+        pass
+
+
 def main() -> None:
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     # o token vai num arquivo 0600 que só o usuário do Termux lê; o hermes-imagem
     # monta a URL com ele. Nunca no log nem no stdout.
+    # Ordem: bind → token → serve_forever. O hermes-imagem só considera o seletor
+    # pronto quando /health RESPONDE, o que exige o serve_forever — ou seja, o
+    # token novo já está gravado (e ele apaga o arquivo velho de um SIGKILL antes
+    # de subir). Gravar ANTES do bind seria pior: com a porta ocupada por outro
+    # seletor vivo, o token dele seria sobrescrito e a URL dele deixaria de abrir.
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     gravar_atomico(TOKEN_ARQ, TOKEN.encode(), 0o600)
     threading.Thread(target=_vigia_ociosidade, args=(srv,), daemon=True).start()
     print(f"seletor de fotos em http://127.0.0.1:{PORT} (encerra após a escolha ou {OCIOSO}s ocioso)", flush=True)
     try:
         srv.serve_forever()
     finally:
-        try:
-            if TOKEN_ARQ.read_text(encoding="utf-8").strip() == TOKEN:
-                TOKEN_ARQ.unlink()
-        except OSError:
-            pass
+        _apagar_meu_token()
         srv.server_close()
 
 

@@ -20,6 +20,9 @@ if up && [ ! -s "$TOKFILE" ]; then
   sleep 1
 fi
 if ! up; then
+  # token que sobrou de um seletor morto (SIGKILL não roda o finally): apaga antes
+  # de subir, senão o laço abaixo aceitaria o arquivo velho
+  rm -f "$TOKFILE"
   setsid nohup "$H/bin/hermes-picker.py" >>"$LOG" 2>&1 </dev/null &
   for _ in $(seq 1 15); do sleep 1; up && [ -s "$TOKFILE" ] && break; done
 fi
