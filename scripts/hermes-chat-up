@@ -1,0 +1,58 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# hermes-chat-up — garante SÓ o servidor do chat nativo (8891) no ar, sem abrir tela.
+# O `hermes-chat` (que abre no app/navegador) passa a chamar este aqui.
+PORT="${HERMES_CHAT_PORT:-8891}"
+H="$HOME/.hermes"
+APP="$H/chat"
+LOG="$H/logs/chat-server.log"
+URL="http://127.0.0.1:$PORT"
+mkdir -p "$H/logs"
+
+[ -f "$APP/index.html" ] || { echo "app de chat ausente em $APP"; exit 1; }
+
+# Guarda contra injetor duplicado: o vigia também sobe este servidor (inline, no
+# laço dele) e a corrida criava dois processos na mesma porta.
+ja_rodando() {
+  python3 - "$PORT" <<'PY'
+import pathlib, sys
+port = sys.argv[1]
+for d in pathlib.Path('/proc').iterdir():
+    if not d.name.isdigit():
+        continue
+    try:
+        cmd = (d / 'cmdline').read_bytes().decode('utf-8', 'replace')
+        argv0 = cmd.split('\0')[0]
+        # exigir o interpretador evita casar com uma SHELL cuja linha de comando
+        # cite o nome do script (falso positivo real na inspeção)
+        if 'hermes-desktop-web.py' not in cmd or 'python' not in argv0:
+            continue
+        env = (d / 'environ').read_bytes().decode('utf-8', 'replace')
+    except Exception:
+        continue
+    p = next((kv.split('=', 1)[1] for kv in env.split('\0') if kv.startswith('HERMES_DESKTOP_WEB_PORT=')), '8890')
+    if p == port:
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+if ja_rodando; then
+  for _ in $(seq 1 8); do
+    sleep 1
+    curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+  done
+fi
+curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+
+cd "$HOME" || exit 1
+# chat: sem remendos do desktop e sem telemetria (o texto da página seria a
+# CONVERSA no log), mesmo que a shell tenha HERMES_WEB_TELEMETRY/…TELEMETRIA exportado
+HERMES_DESKTOP_WEB="$APP" HERMES_DESKTOP_WEB_PORT="$PORT" \
+HERMES_WEB_LOG="$H/logs/chat-telemetria.log" \
+HERMES_WEB_DESKTOP_FIXES=0 HERMES_WEB_TELEMETRY=0 HERMES_WEB_TELEMETRIA=0 \
+  setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
+for _ in $(seq 1 15); do
+  sleep 1
+  curl -s -o /dev/null --max-time 3 "$URL/__health" && exit 0
+done
+echo "servidor do chat nao subiu — veja $LOG"
+exit 1

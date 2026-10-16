@@ -74,13 +74,33 @@ while true; do
   fi
   # mantém também a UI do desktop (porta 8890) no ar
   [ -x "$HERMES_HOME/bin/hermes-desktop-up" ] && "$HERMES_HOME/bin/hermes-desktop-up" >/dev/null 2>&1 8>&-
-  # e o chat nativo (porta 8891), quando o app existir — mesmo ambiente do
-  # hermes-chat: log próprio, sem remendos do desktop e sem telemetria de DOM
+  # e o sshd do Termux (porta 8022, so chave publica), config em $PREFIX/etc/ssh/sshd_config.d/*.conf
+  # Só se o openssh estiver instalado: sem ele o laço logava "ressuscitando" todo minuto.
+  # `8>&-`: o sshd vira daemon e viveria segurando o lock do watchdog.
+  if command -v sshd >/dev/null 2>&1 && ! pgrep -x sshd >/dev/null 2>&1; then
+    echo "$(date '+%F %T') sshd ausente, ressuscitando" >>"$HERMES_HOME/logs/sshd.log"
+    sshd >>"$HERMES_HOME/logs/sshd.log" 2>&1 8>&-
+  fi
+  # e o Chromium nativo com CDP na 9222 — motor do browser_exec do Hermes
+  # (o Hermes não empacota Chromium arm64-android; browser.cdp_url aponta pra cá)
+  if [ -x "$HERMES_HOME/bin/chrome-cdp" ] && \
+     ! curl -s -o /dev/null --max-time 4 "http://127.0.0.1:${CHROME_CDP_PORT:-9222}/json/version"; then
+    echo "$(date '+%F %T') chromium CDP ausente, ressuscitando" >>"$HERMES_HOME/logs/chrome-cdp.log"
+    "$HERMES_HOME/bin/chrome-cdp" up >>"$HERMES_HOME/logs/chrome-cdp.log" 2>&1 8>&-
+  fi
+  # e o chat nativo (porta 8891), quando o app existir — pelo hermes-chat-up (guarda
+  # contra servidor duplicado; log próprio, sem remendos do desktop e sem telemetria)
   if [ -f "$HERMES_HOME/chat/index.html" ]; then
-    curl -s -o /dev/null --max-time 3 "http://127.0.0.1:${HERMES_CHAT_PORT:-8891}/__health" || \
-      ( cd "$HOME" && HERMES_DESKTOP_WEB="$HERMES_HOME/chat" HERMES_DESKTOP_WEB_PORT="${HERMES_CHAT_PORT:-8891}" \
-        HERMES_WEB_LOG="$HERMES_HOME/logs/chat-telemetria.log" HERMES_WEB_DESKTOP_FIXES=0 HERMES_WEB_TELEMETRY=0 \
-        setsid nohup python "$HERMES_HOME/bin/hermes-desktop-web.py" >>"$HERMES_HOME/logs/chat-server.log" 2>&1 </dev/null 8>&- & )
+    if ! curl -s -o /dev/null --max-time 3 "http://127.0.0.1:${HERMES_CHAT_PORT:-8891}/__health"; then
+      if [ -x "$HERMES_HOME/bin/hermes-chat-up" ]; then
+        "$HERMES_HOME/bin/hermes-chat-up" >/dev/null 2>&1 8>&-
+      else
+        ( cd "$HOME" && HERMES_DESKTOP_WEB="$HERMES_HOME/chat" HERMES_DESKTOP_WEB_PORT="${HERMES_CHAT_PORT:-8891}" \
+          HERMES_WEB_LOG="$HERMES_HOME/logs/chat-telemetria.log" HERMES_WEB_DESKTOP_FIXES=0 \
+          HERMES_WEB_TELEMETRY=0 HERMES_WEB_TELEMETRIA=0 \
+          setsid nohup python "$HERMES_HOME/bin/hermes-desktop-web.py" >>"$HERMES_HOME/logs/chat-server.log" 2>&1 </dev/null 8>&- & )
+      fi
+    fi
   fi
   sleep 60
 done
