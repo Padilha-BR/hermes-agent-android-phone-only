@@ -138,8 +138,7 @@ quais faltam). Sem eles tudo sobe; só a parte correspondente fica de fora.
 |---|---|---|
 | `~/hermes-app/patch_dashboard_pwa.py`, `icon-192.png`, `icon-512.png` | `dashboard-up.sh` (PWA do dashboard) | o dashboard funciona, mas não instala como app |
 | `~/.hermes/desktop-look.css` | `patch-dashboard-look.py` via `dashboard-up.sh` | o dashboard fica com a cara original |
-| `~/.hermes/desktop-port.css` | `hermes-desktop-up` (`HERMES_WEB_EXTRA_CSS`) | a UI do desktop fica sem os ajustes de layout para o celular |
-| `~/.hermes/desktop-fonts.css` | idem — gerado por `gerar-fontes-embutidas.py` depois de cada build | wordmark e código caem na fonte do sistema |
+| `~/.hermes/desktop-fonts.css` | `hermes-desktop-up` (`HERMES_WEB_EXTRA_CSS`) — gerado por `gerar-fontes-embutidas.py` depois de cada build | wordmark e código caem na fonte do sistema |
 | `~/.hermes/chat/fonts/JetBrainsMono-{Regular,Bold}.woff2` | `chat/index.html` | o `install.sh` copia do bundle do desktop se achar; senão o chat usa a mono do sistema |
 
 ## `shortcuts/`
