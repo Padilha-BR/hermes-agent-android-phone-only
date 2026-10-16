@@ -380,7 +380,7 @@ const __TELEMETRIA__ = %(telemetria)s;
           const cs = getComputedStyle(el);
           const r = el.getBoundingClientRect();
           cadeia.push((el.tagName || '?').toLowerCase() +
-            (el.className && typeof el.className === 'string' ? '.' + el.className.split(/\s+/).slice(0, 2).join('.') : '') +
+            (el.className && typeof el.className === 'string' ? '.' + el.className.split(/\\s+/).slice(0, 2).join('.') : '') +
             '[h=' + Math.round(r.height) + ',y=' + Math.round(r.y) +
             ',ov=' + cs.overflowY + ',pos=' + cs.position + ',hcss=' + cs.height +
             ',inline=' + ((el.getAttribute('style') || '').slice(0, 40) || '-') + ']');
@@ -411,8 +411,8 @@ const __TELEMETRIA__ = %(telemetria)s;
       env('dom', 'title=' + document.title + ' | hash=' + location.hash +
         ' | nos=' + document.querySelectorAll('*').length +
         (FLAGS.dom
-          ? ' | texto=' + t.replace(/\s+/g, ' ').slice(0, 400) +
-            ' | completo=' + tudo.replace(/\s+/g, ' ').slice(0, 900)
+          ? ' | texto=' + t.replace(/\\s+/g, ' ').slice(0, 400) +
+            ' | completo=' + tudo.replace(/\\s+/g, ' ').slice(0, 900)
           : ' | texto=<' + t.length + ' chars>'));
     } catch (e) { env('dom', 'probe falhou ' + e); }
   };
@@ -548,7 +548,7 @@ const __TELEMETRIA__ = %(telemetria)s;
       window.matchMedia = function (q) {
         const mq = _mm(q);
         try {
-          if (/max-width:\s*639\.98px/.test(String(q))) {
+          if (/max-width:\\s*639\\.98px/.test(String(q))) {
             Object.defineProperty(mq, 'matches', { get: () => false, configurable: true });
           }
         } catch (e) {}
