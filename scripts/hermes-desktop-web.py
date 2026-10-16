@@ -751,14 +751,16 @@ class Handler(BaseHTTPRequestHandler):
         dentro de $HOME: a porta é loopback, mas qualquer app do aparelho a
         alcança, e isto aqui lê disco.
         """
-        from urllib.parse import unquote as _unq
-
-        pedido = _unq((q.get("path") or [""])[0])
+        # Token ANTES de olhar o caminho: a checagem antiga passava sem token
+        # nenhum enquanto LAST_TOKEN estava vazio (injetor recém-subido ou
+        # backend fora do ar) e comparava com `!=`, fora de tempo constante.
+        if not self._sessao_ok():
+            return self._send(b'{"ok":false,"erro":"token invalido"}', "application/json", 403)
+        # parse_qs já decodificou; um segundo unquote transformava `%25` em `%`
+        # e quebrava nomes de arquivo com `%` no meio.
+        pedido = (q.get("path") or [""])[0]
         if not pedido:
             return self._send(b'{"ok":false,"erro":"sem path"}', "application/json", 400)
-        veio = self.headers.get("x-hermes-session-token", "")
-        if not CMD_INSEGURO and LAST_TOKEN and veio != LAST_TOKEN:
-            return self._send(b'{"ok":false,"erro":"token invalido"}', "application/json", 403)
         try:
             alvo = (Path(pedido) if Path(pedido).is_absolute() else (HOME / pedido)).resolve()
             alvo.relative_to(HOME.resolve())
@@ -788,11 +790,17 @@ class Handler(BaseHTTPRequestHandler):
         Aceita `~`, caminho relativo à base (o cwd que o app mandou) e, se não
         achar, procura por NOME dentro de $HOME (digitar "docker" acha
         ~/repos/docker-termux). Devolve {path} ou {erro, candidatos}.
-        """
-        from urllib.parse import unquote as _unq
 
-        bruto = _unq((q.get("nome") or [""])[0]).strip().strip('"').strip("'")
-        base = _unq((q.get("base") or [""])[0]).strip() or str(HOME)
+        Exige o token da sessão: sem ele, qualquer app do aparelho usava isto
+        como oráculo de "existe esta pasta?" e listava nomes de diretório de
+        $HOME. `base` NÃO é restrita a $HOME de propósito (pasta em /sdcard é
+        caso legítimo) — quem tem o token já fala com o agente, que lê tudo.
+        """
+        if not self._sessao_ok():
+            return self._send(b'{"ok":false,"erro":"token invalido"}', "application/json", 403)
+        # parse_qs já decodificou (ver _servir_arquivo)
+        bruto = (q.get("nome") or [""])[0].strip().strip('"').strip("'")
+        base = (q.get("base") or [""])[0].strip() or str(HOME)
         if bruto.startswith("~"):
             bruto = str(HOME) + bruto[1:]
         alvo = Path(bruto) if bruto.startswith("/") else (Path(base) / bruto)
@@ -1070,11 +1078,11 @@ self.addEventListener('fetch', (e) => {
             return self._send(SHIM.read_bytes(), "text/javascript; charset=utf-8")
         if path == "/__file":
             # miniatura/preview de um anexo já salvo (imagem, PDF, texto…).
-            # Exige o token da sessão e caminho dentro de $HOME — ver _servir_arquivo.
+            # Exige o token da sessão (falha fechada) e caminho dentro de $HOME.
             return self._servir_arquivo(parse_qs(urlparse(self.path).query))
         if path == "/__resolver-pasta":
             # "escolher pasta" no navegador: o usuário digita o caminho e aqui a
-            # gente confere/descobre. Ver _resolver_pasta.
+            # gente confere/descobre. Exige o token da sessão. Ver _resolver_pasta.
             return self._resolver_pasta(parse_qs(urlparse(self.path).query))
         return self._estatico(path)
 
