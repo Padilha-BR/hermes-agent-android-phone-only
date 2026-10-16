@@ -77,9 +77,9 @@ while true; do
   # e o sshd do Termux (porta 8022, so chave publica), config em $PREFIX/etc/ssh/sshd_config.d/*.conf
   # Só se o openssh estiver instalado: sem ele o laço logava "ressuscitando" todo minuto.
   # E só se o sshd foi CONFIGURADO de propósito (um *.conf em sshd_config.d, ou
-  # HERMES_WATCHDOG_SSHD=1): o sshd_config padrão do Termux aceita SENHA e escuta em
-  # todas as interfaces — quem instalou o openssh só pelo cliente `ssh` ganhava um
-  # servidor na rede Wi-Fi a cada boot. HERMES_WATCHDOG_SSHD=0 desliga sempre.
+  # HERMES_WATCHDOG_SSHD=1): o sshd padrão do Termux escuta em todas as interfaces
+  # (e, conforme a versão do pacote, aceita senha) — quem instalou o openssh só pelo
+  # cliente `ssh` ganhava um servidor na rede Wi-Fi a cada boot. HERMES_WATCHDOG_SSHD=0 desliga sempre.
   # `8>&-`: o sshd vira daemon e viveria segurando o lock do watchdog.
   sshd_quer="${HERMES_WATCHDOG_SSHD:-}"
   if [ -z "$sshd_quer" ]; then

@@ -59,7 +59,7 @@ ficam no arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 | Arquivo | O que faz |
 |---|---|
 | `dashboard-up.sh` | Idempotente. Se `/api/health` responde, sai. Senão sobe o dashboard com `--skip-build`, **reaplica o patch PWA** se faltar e cai para build completo se o skip falhar. Serializado por `flock` (`state/dashboard-up.lock`): watchdog e widget não se atropelam mais. Build completo que falha entra em backoff (5→10→20→40 min, teto 1 h, estado em `state/dashboard-build-falhas`); `HERMES_FORCE_BUILD=1` ignora o backoff. |
-| `dashboard-watchdog.sh` | Laço de 60 s chamando `dashboard-up.sh`, guarda de instância única por `flock` (`state/dashboard-watchdog.lock`) com o pidfile (pid + starttime) como reserva e para reconhecer um watchdog da versão anterior, segurando `termux-wake-lock` — e o devolvendo no trap de saída. Quando o `dashboard-up.sh` falha, espaça as tentativas (2→4→8→15 min). No mesmo laço mantém a UI do desktop (8890), o chat (8891, pelo `hermes-chat-up`), o `sshd` do Termux (8022, só chave pública — só se o openssh estiver instalado) e o Chromium com CDP (9222, motor do `browser_exec` — só se `chrome-cdp` estiver instalado). Rode-o desgarrado (`setsid`) para ele virar PPid 1 e sobreviver à sessão do agente. |
+| `dashboard-watchdog.sh` | Laço de 60 s chamando `dashboard-up.sh`, guarda de instância única por `flock` (`state/dashboard-watchdog.lock`) com o pidfile (pid + starttime) como reserva e para reconhecer um watchdog da versão anterior, segurando `termux-wake-lock` — e o devolvendo no trap de saída. Quando o `dashboard-up.sh` falha, espaça as tentativas (2→4→8→15 min). No mesmo laço mantém a UI do desktop (8890), o chat (8891, pelo `hermes-chat-up`), o `sshd` do Termux (8022 — só se o openssh estiver instalado **e** configurado de propósito: um `*.conf` em `$PREFIX/etc/ssh/sshd_config.d/` ou `HERMES_WATCHDOG_SSHD=1`; `=0` desliga) e o Chromium com CDP (9222, motor do `browser_exec` — só se `chrome-cdp` e o `chromium-browser` estiverem instalados). Rode-o desgarrado (`setsid`) para ele virar PPid 1 e sobreviver à sessão do agente. |
 | `10-hermes-dashboard.sh` | Script de boot (`~/.termux/boot/`, via app **Termux:Boot**): espera 20 s e sobe o watchdog. **Um só** script de boot — duplicados disputam a mesma porta. |
 | `hermes-app` | Sobe o backend e abre **o app dele**: o ícone "Hermes" da tela inicial é um WebAPK apontando para a UI portada em 8890, não para o dashboard. Abrir a 9119 como "o app" joga o usuário numa aba nova do Chrome, no painel errado — quem abre o certo é o `hermes-voltar`. |
 | `hermes-voltar` | Acha o WebAPK da tela inicial **pela porta do app** (o hash do pacote muda se ele reinstalar o atalho) e abre por componente explícito, que é o único jeito: WebAPK não abre por pacote. `status` mostra o alvo. |
@@ -103,7 +103,10 @@ ficam no arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 
 Medir sem ver a tela, e sem depender do usuário para testar. Todos rodam com o **python do venv**
 (`~/hermes-agent/venv/bin/python`), exigem o Chromium com CDP no 9222 (`chrome-cdp up`) e o injetor
-no ar.
+no ar. **Não precisam do `/__cmd`** (nem de `HERMES_DESKTOP_CMD=1`): falam CDP com o Chromium, e as
+chamadas às rotas locais (`/__zoom`, `/__upload`, `/__save-text`, `/__file`) partem da própria página,
+com o token da sessão e a mesma origem que o injetor exige. Só a leitura da página **viva do
+aparelho** (o Chrome do usuário, não o headless) usa o `/__cmd` — ver o aviso no topo.
 
 | Arquivo | O que faz |
 |---|---|
