@@ -58,8 +58,8 @@ Serve de referência de **qualidade de documentação** para este tipo de projet
 
 1. **Telefone é host E cliente.** O renderer oficial de `apps/desktop` é servido em
    `http://127.0.0.1:8890` **pelo Termux do próprio aparelho**, para o navegador do próprio
-   aparelho. Sem PC, sem VM, sem Debian, sem Docker, sem Tailscale, sem segundo processo fora
-   do telefone. Todos os ports que achamos põem algo entre o telefone e a UI.
+   aparelho. Sem segunda máquina no caminho: sem outro host, sem host de contêiner, sem túnel,
+   sem segundo processo fora do telefone. Todos os ports que achamos põem algo entre o telefone e a UI.
 2. **Ponte gerada do contrato de tipos, não escrita à mão.** `apps/desktop/src/global.d.ts` →
    [`gerar-shim-stubs.py`](../scripts/gerar-shim-stubs.py) → `shim-stubs.js` com **160 chaves
    inertes** (medido hoje: 9.688 bytes), sobre as quais o shim real implementa o que importa.

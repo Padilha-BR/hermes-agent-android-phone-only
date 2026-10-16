@@ -1,4 +1,4 @@
-# 06 — Operação 100% pelo celular (sem teclado físico, sem PC)
+# 06 — Operação 100% pelo celular (sem teclado físico, sem segunda máquina)
 
 Objetivo declarado: **toda** tarefa tem que ser possível só com o aparelho — teclado de tela e,
 quando der, toques na tela. Três frentes.
@@ -99,7 +99,7 @@ code — confirme pelo efeito colateral.
 - Caminho que funciona: **o usuário tira print (Power + Volume baixo)** e o agente lê o arquivo
   direto de `~/storage/dcim/Screenshots/` (precisa da permissão de arquivos) e analisa com visão.
   Confirmado: os prints abrem (1440x3120 JPEG) e são legíveis.
-- Com cabo num computador, `adb exec-out screencap -p` continua sendo o caminho autônomo.
+- Com cabo numa segunda máquina, `adb exec-out screencap -p` continua sendo o caminho autônomo.
 
 ## Instalar APK quando o usuário só tem o celular
 

@@ -28,7 +28,7 @@ exige tela desbloqueada e focada. Caminho determinístico:
 ```bash
 # no telefone, como o UID do Termux: escreva ~/.ssh/authorized_keys, então
 sshd                      # escuta em 8022
-# no computador, com o cabo ligado
+# na segunda máquina, com o cabo ligado
 adb forward tcp:8022 tcp:8022
 ssh -i ./key -p 8022 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null <qualquer>@127.0.0.1
 ```
@@ -54,11 +54,11 @@ export TMPDIR=$PREFIX/tmp
 
 ## As duas rotas — e o que o ADB faz de verdade
 
-Esta instalação usou **ADB a partir de um computador, com cabo USB** — mas só como *porta de
+Esta instalação usou **ADB a partir de uma segunda máquina, com cabo USB** — mas só como *porta de
 entrada*. Os rastros no aparelho mostram exatamente isso: o `~/boot.sh` abre dizendo
 "fase 1: deixa o Termux acessível por SSH (via adb forward)" e declara que roda como
-`adb shell run-as com.termux <bash> boot.sh`; e a `~/.ssh/authorized_keys` tem a chave que o
-computador usou para entrar.
+`adb shell run-as com.termux <bash> boot.sh`; e a `~/.ssh/authorized_keys` tem a chave que aquela
+máquina usou para entrar.
 
 **O que o ADB fez (fase 1, só a porta):**
 
@@ -78,7 +78,7 @@ tocou em nada disso. **ADB é a porta; quem trabalha é o telefone.**
 `am start`, `screencap` e até a whitelist de bateria
 (`dumpsys deviceidle whitelist +com.termux`) funcionam com a tela bloqueada. Duas ressalvas:
 
-1. **ADB precisa de computador, cabo e depuração USB.** Sem isso, a rota é a do doc 06: Termux pelo
+1. **ADB precisa de uma segunda máquina, cabo e depuração USB.** Sem isso, a rota é a do doc 06: Termux pelo
    navegador, `termux-setup-storage`, e servir o APK por HTTP local para o Chrome instalar.
 2. **ADB só funciona no build debug** — e trocar a fonte do APK exige `adb uninstall com.termux`
    antes, o que **apaga os dados do Termux**. Decida antes, não no meio do caminho.
