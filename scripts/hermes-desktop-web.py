@@ -740,14 +740,78 @@ class Handler(BaseHTTPRequestHandler):
             }
             return self._send(json.dumps(man).encode(), "application/manifest+json")
         if path == "/__sw.js":
-            # Service worker mínimo exigido pelo Chrome para oferecer "Instalar app".
-            # SEM cache: passa tudo direto pra rede (um SW com cache serviria versão
-            # velha da UI e eu ficaria depurando fantasma).
-            sw = (
-                "self.addEventListener('install', () => self.skipWaiting());\n"
-                "self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));\n"
-                "self.addEventListener('fetch', () => {});\n"
-            )
+            # Service worker do app no celular. SEM cache de UI (a injeção carrega
+            # token/shim frescos e um SW com cache serviria versão velha), com UMA
+            # missão a mais: RESGATE. Se o servidor local ainda não subiu — o caso
+            # normal nos primeiros minutos depois de reiniciar o aparelho — em vez
+            # da tela de erro do Chrome o app abre uma página que explica e tenta
+            # sozinha até o servidor responder (autocura, sem fechar o app).
+            sw = """const RESGATE = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hermes acordando</title>
+<style>
+  :root { color-scheme: dark }
+  html,body { height:100%; margin:0 }
+  body { background:#0b0b0e; color:#e6e6ea; padding:24px;
+         font:16px/1.55 system-ui,-apple-system,Roboto,sans-serif;
+         display:flex; align-items:center; justify-content:center }
+  .c { max-width:520px; text-align:center }
+  h1 { font-size:20px; font-weight:600; margin:0 0 14px }
+  p { margin:0 0 10px; color:#a9a9b6 }
+  .d { font-family:ui-monospace,monospace; font-size:13px; color:#8a8a97;
+       margin-top:18px; white-space:pre-wrap }
+  .b { margin-top:18px; background:#1b1b21; border:1px solid #2c2c35;
+       color:#e6e6ea; border-radius:10px; padding:10px 16px; font-size:15px }
+  .p { display:inline-block; width:8px; height:8px; border-radius:50%;
+       background:#f5a623; margin-right:8px; animation:pu 1.1s infinite }
+  @keyframes pu { 0%,100%{opacity:.2} 50%{opacity:1} }
+</style>
+</head>
+<body><div class="c">
+  <h1><span class="p"></span>Acordando o Hermes</h1>
+  <p>O servidor do Hermes aqui no celular ainda nao respondeu. Isso e normal nos
+     primeiros minutos depois de reiniciar o aparelho &mdash; ele esta subindo.</p>
+  <p>Esta pagina tenta sozinha e abre o app assim que ele estiver de pe. Pode deixar aberta.</p>
+  <div class="d" id="d">tentando</div>
+  <button class="b" id="b">Tentar agora</button>
+</div>
+<script>
+  var d = document.getElementById('d');
+  var b = document.getElementById('b');
+  var n = 0, t0 = Date.now();
+  var tenta = function () {
+    n++;
+    d.textContent = 'tentativa ' + n + ' - ' + Math.round((Date.now() - t0) / 1000) + 's';
+    fetch('/__health', { cache: 'no-store' }).then(function (r) {
+      if (r && r.ok) { d.textContent = 'servidor no ar - abrindo o app'; location.reload(); }
+      else { setTimeout(tenta, 1500); }
+    }).catch(function () { setTimeout(tenta, 1500); });
+  };
+  b.addEventListener('click', tenta);
+  tenta();
+</script>
+</body></html>`;
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  // só a NAVEGAÇÃO é interceptada: API, assets e SSE seguem direto pra rede
+  if (req.mode !== 'navigate') return;
+  e.respondWith(
+    fetch(req).catch(() => new Response(RESGATE, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store'
+      }
+    }))
+  );
+});
+"""
             return self._send(sw.encode(), "text/javascript; charset=utf-8")
         if path == "/__stubs.js":
             stubs = HERMES_HOME / "bin" / "shim-stubs.js"
