@@ -62,7 +62,7 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 | `hermes-desktop-zoom` | Escolhe o tamanho do texto da UI portada. O tamanho é o **inverso** da largura de viewport injetada (`width=N`; N menor = texto maior). Fica gravado em `~/.hermes/state/desktop-web-viewport` (sem arquivo, o `hermes-desktop-up` cai no 900). |
 | `hermes-desktop-reload` | Recarrega a UI de forma confiável (abrir a mesma URL numa aba já aberta só foca a aba). |
 | `hermes-chat` | Abre a superfície de chat **nativa** (8891), que fala o protocolo WebSocket do gateway. |
-| `build-desktop-web.mjs` | Build do renderer do desktop sem Electron (chama o Vite direto). **Nunca** use `npm run build`, que monta o pacote Electron. |
+| `build-desktop-web.mjs` | Build do renderer do desktop sem Electron (chama o Vite direto). **Nunca** use `npm run build`, que monta o pacote Electron. Sai em `~/hermes-agent/.hermes-port/renderer` — o mesmo diretório que o `hermes-desktop-up` serve (`HERMES_DESKTOP_WEB` muda os dois; `HERMES_AGENT_DIR` muda o clone). |
 
 ## A ponte (portar a UI do desktop para o navegador)
 
@@ -81,7 +81,7 @@ arquivo de ambiente do `HERMES_HOME`, com `chmod 600`.
 |---|---|
 | `chat/index.html`, `chat/app.js` | A SPA do chat nativo, falando JSON-RPC 2.0 por WebSocket com streaming de verdade. |
 | `verify-native-chat.py` | Verifica o protocolo do gateway (métodos e eventos) **antes** de prometer que funciona. |
-| `testar-chat-gateway.py`, `testar-chat-metodos.py` | Sondas usadas para descobrir o contrato. |
+| `testar-chat-metodos.py` | Sonda de `session.list/resume/history/activate`, `image.attach` e `session.interrupt`. **Cria uma sessão no histórico real**: só roda com `HERMES_TESTE_CONFIRMO=1`; `image.attach` só com `FOTO=<arquivo>`; imprime a forma das respostas, não o conteúdo das conversas. |
 
 ## Diagnóstico e saúde
 
