@@ -11,6 +11,7 @@ Nada é exposto pra fora: bind só em 127.0.0.1.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -33,6 +34,22 @@ LOG = Path(os.environ.get("HERMES_WEB_LOG", str(HERMES_HOME / "logs" / "desktop-
 # console a cada 10s e o log cresce ~4 MB/dia — foi reclamação do usuário (15/10/2026).
 TELEMETRIA = os.environ.get("HERMES_WEB_TELEMETRIA", "").lower() in ("1", "true", "yes", "on")
 DEBUG = TELEMETRIA or os.environ.get("HERMES_WEB_DEBUG", "").lower() in ("1", "true", "yes", "on")
+# Largura de viewport que corresponde a "100%" na escala da UI do app
+# (Ajustes → Aparência). O porte nasceu em 800px CSS; a escala que o app mostra
+# é percent = 100 * BASE_W / largura, então mexer nesta constante REMAPEIA os
+# presets do app (90…175%) — não mexa sem querer.
+BASE_W = int(os.environ.get("HERMES_WEB_BASE_WIDTH", "800"))
+# Colar um texto gigante no composer vira anexo .txt (savePastedText da ponte).
+# Teto de tamanho: o endpoint é alcançável por qualquer app do aparelho no
+# loopback e não pode virar torneira de disco.
+PASTES = HERMES_HOME / "composer-pastes"
+LIMITE_PASTE = 2 * 1024 * 1024
+# Anexos (foto/arquivo escolhido no seletor do Android). O navegador não entrega
+# caminho de arquivo: a ponte sobe os BYTES e recebe de volta um caminho em
+# disco, que é o que o app (e o agente, com cwd=$HOME) sabe usar.
+ANEXOS = HOME / "attachments"
+LIMITE_ANEXO = 24 * 1024 * 1024          # por arquivo, antes do base64
+LIMITE_CORPO = 40 * 1024 * 1024          # teto do corpo recebido (base64 infla 4/3)
 # /__cmd executa JS arbitrário nas páginas abertas. Sem exigir token, qualquer
 # página web aberta no Chrome alcança a porta fixa por GET (CSRF, sem CORS) e
 # dirige a UI que carrega o token da sessão — no Android o loopback também é
@@ -125,6 +142,8 @@ def redact(text: str) -> str:
 PONTE = """<script>
 window.__HERMES_BACKEND__ = %(backend)s;
 window.__HERMES_SESSION_TOKEN__ = %(token)s;
+// Largura de viewport que o shim trata como "100%%" na escala da UI (Ajustes → Aparência).
+window.__HERMES_WEB_BASE_WIDTH__ = %(base_w)s;
 // Telemetria de debug (pulso/probe/console): só quando o servidor manda
 // (HERMES_WEB_TELEMETRIA=1). Desligada, a página não manda nada e não varre o DOM.
 const __TELEMETRIA__ = %(telemetria)s;
@@ -398,15 +417,224 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
+    def _zoom(self, data) -> None:
+        """Persiste a largura de viewport escolhida na escala da UI do app.
+
+        O app (Ajustes → Aparência → escala) chama window.hermesDesktop.zoom
+        .setPercent(); o shim traduz para largura e avisa aqui, para o PRÓXIMO
+        carregamento da página já nascer no tamanho certo (sem "pulo" de
+        escala). O valor vivo de cada aba continua no localStorage dela.
+        """
+        try:
+            w = int(data.get("width"))
+        except (TypeError, ValueError):
+            return self._send(b'{"ok":false,"erro":"width invalido"}', "application/json", 400)
+        if not 400 <= w <= 2400:
+            return self._send(b'{"ok":false,"erro":"width fora de faixa"}', "application/json", 400)
+        arq = HERMES_HOME / "state" / "desktop-web-viewport"
+        try:
+            arq.parent.mkdir(parents=True, exist_ok=True)
+            arq.write_text(str(w), encoding="utf-8")
+        except OSError as exc:
+            return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
+                              "application/json", 500)
+        log(f"[zoom] largura de viewport persistida: {w}px CSS")
+        return self._send(json.dumps({"ok": True, "width": w}).encode(), "application/json")
+
+    def _save_text(self, data) -> None:
+        """Cola-texto-grande → arquivo, para o anexo "@file:" do composer.
+
+        Mesmo comportamento do savePastedText do Electron; o app só usa isto
+        acima do limite de paste inline e degrada sozinho (mantém inline) se
+        devolvermos vazio.
+        """
+        texto = data.get("text")
+        if not isinstance(texto, str) or not texto:
+            return self._send(b'{"ok":false,"erro":"sem texto"}', "application/json", 400)
+        if len(texto.encode("utf-8")) > LIMITE_PASTE:
+            return self._send(b'{"ok":false,"erro":"texto grande demais"}', "application/json", 413)
+        try:
+            PASTES.mkdir(parents=True, exist_ok=True)
+            nome = "paste-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6] + ".txt"
+            destino = PASTES / nome
+            destino.write_text(texto, encoding="utf-8")
+        except OSError as exc:
+            return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
+                              "application/json", 500)
+        log(f"[paste] texto colado salvo em {destino} ({len(texto)} chars)")
+        return self._send(json.dumps({"ok": True, "path": str(destino)}).encode(),
+                          "application/json")
+
+    def _upload(self, data) -> None:
+        """Recebe os BYTES de um anexo e devolve um caminho em disco.
+
+        Por que existe: no Electron quem escolhe arquivo é o diálogo nativo e o
+        app recebe um CAMINHO. No navegador o seletor devolve um File (sem
+        caminho) — então a ponte sobe os bytes aqui, o arquivo nasce em
+        $HOME/attachments/ e o caminho volta para o app, que o usa como
+        `@file:<caminho>` para o agente (que roda com cwd=$HOME e lê de verdade).
+        """
+        nome = str(data.get("name") or "")[:120]
+        ext = re.sub(r"[^A-Za-z0-9]", "", str(data.get("ext") or ""))[:8]
+        bruto = data.get("data_url") or data.get("data_b64") or ""
+        if not isinstance(bruto, str) or not bruto:
+            return self._send(b'{"ok":false,"erro":"sem dados"}', "application/json", 400)
+        if "," in bruto and bruto.lstrip().startswith("data:"):
+            bruto = bruto.split(",", 1)[1]
+        try:
+            conteudo = base64.b64decode(bruto, validate=False)
+        except Exception:
+            return self._send(b'{"ok":false,"erro":"base64 invalido"}', "application/json", 400)
+        if len(conteudo) == 0:
+            return self._send(b'{"ok":false,"erro":"arquivo vazio"}', "application/json", 400)
+        if len(conteudo) > LIMITE_ANEXO:
+            return self._send(
+                json.dumps({"ok": False, "erro": f"arquivo maior que {LIMITE_ANEXO // 1048576}MB"}).encode(),
+                "application/json", 413)
+        # nome seguro: nada de barra, ponto-ponto ou caractere de controle
+        limpo = re.sub(r"[^A-Za-z0-9._-]", "_", nome).strip("._") or "arquivo"
+        if ext and not limpo.lower().endswith("." + ext.lower()):
+            limpo += "." + ext
+        carimbo = time.strftime("%Y%m%d-%H%M%S")
+        destino = ANEXOS / f"{carimbo}-{limpo}"
+        try:
+            ANEXOS.mkdir(parents=True, exist_ok=True)
+            if destino.exists():
+                destino = ANEXOS / f"{carimbo}-{uuid.uuid4().hex[:4]}-{limpo}"
+            destino.write_bytes(conteudo)
+        except OSError as exc:
+            return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
+                              "application/json", 500)
+        log(f"[anexo] {len(conteudo)} bytes → {destino}")
+        return self._send(json.dumps({"ok": True, "path": str(destino)}).encode(),
+                          "application/json")
+
+    def _servir_arquivo(self, q) -> None:
+        """Serve um arquivo do aparelho para a página (miniatura/preview).
+
+        Exige o token da sessão (o mesmo que o HTML injeta) e só aceita caminho
+        dentro de $HOME: a porta é loopback, mas qualquer app do aparelho a
+        alcança, e isto aqui lê disco.
+        """
+        from urllib.parse import unquote as _unq
+
+        pedido = _unq((q.get("path") or [""])[0])
+        if not pedido:
+            return self._send(b'{"ok":false,"erro":"sem path"}', "application/json", 400)
+        veio = self.headers.get("x-hermes-session-token", "")
+        if not CMD_INSEGURO and LAST_TOKEN and veio != LAST_TOKEN:
+            return self._send(b'{"ok":false,"erro":"token invalido"}', "application/json", 403)
+        try:
+            alvo = (Path(pedido) if Path(pedido).is_absolute() else (HOME / pedido)).resolve()
+            alvo.relative_to(HOME.resolve())
+        except ValueError:
+            return self._send(b'{"ok":false,"erro":"fora de $HOME"}', "application/json", 403)
+        except OSError:
+            return self._send(b'{"ok":false,"erro":"caminho invalido"}', "application/json", 400)
+        if not alvo.is_file():
+            return self._send(b'{"ok":false,"erro":"nao existe"}', "application/json", 404)
+        try:
+            if alvo.stat().st_size > LIMITE_ANEXO:
+                return self._send(b'{"ok":false,"erro":"arquivo grande demais"}',
+                                  "application/json", 413)
+            corpo = alvo.read_bytes()
+        except OSError as exc:
+            return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
+                              "application/json", 500)
+        return self._send(corpo, MIME.get(alvo.suffix.lower(), "application/octet-stream"))
+
+    def _resolver_pasta(self, q) -> None:
+        """Transforma o que o usuário digitou num caminho de pasta existente.
+
+        Por que existe: escolher PASTA no navegador é impossível (nenhuma API
+        entrega o caminho de uma pasta; `showDirectoryPicker` nem existe no
+        Chrome Android). Mas aqui a pasta é deste aparelho e o agente lê esse
+        caminho — então basta pedir o caminho ao usuário e CONFERIR que existe.
+        Aceita `~`, caminho relativo à base (o cwd que o app mandou) e, se não
+        achar, procura por NOME dentro de $HOME (digitar "docker" acha
+        ~/repos/docker-termux). Devolve {path} ou {erro, candidatos}.
+        """
+        from urllib.parse import unquote as _unq
+
+        bruto = _unq((q.get("nome") or [""])[0]).strip().strip('"').strip("'")
+        base = _unq((q.get("base") or [""])[0]).strip() or str(HOME)
+        if bruto.startswith("~"):
+            bruto = str(HOME) + bruto[1:]
+        alvo = Path(bruto) if bruto.startswith("/") else (Path(base) / bruto)
+        try:
+            alvo = alvo.resolve()
+        except OSError:
+            alvo = Path(base)
+        if alvo.is_dir():
+            return self._send(json.dumps({"ok": True, "path": str(alvo), "exato": True}).encode(),
+                              "application/json")
+        # não achou: procura pelo NOME dentro de $HOME (busca limitada de propósito)
+        if not bruto:
+            return self._send(b'{"ok":false,"erro":"vazio"}', "application/json", 400)
+        nome = Path(bruto.rstrip("/")).name.lower()
+        PULAR = {".git", "node_modules", ".cargo", ".cache", ".rustup", "venv", ".venv",
+                 "site-packages", "__pycache__", ".npm", ".gradle", "build", "dist"}
+
+        def varre(maxprof, orcamento):
+            """Passa pelas pastas de $HOME até `maxprof` níveis, com teto de visitas.
+
+            Ordena e limita a largura de propósito: sem isso uma árvore gigante
+            (hermes-agent, com milhares de diretórios) consome o orçamento ANTES
+            de chegar em ~/repos — foi assim que "docker" deixou de achar
+            ~/repos/docker-termux na primeira versão.
+            """
+            exatos, parciais, vistos = [], [], 0
+            for raiz, dirs, _arqs in os.walk(HOME):
+                try:
+                    prof = len(Path(raiz).relative_to(HOME).parts)
+                except ValueError:
+                    continue
+                if prof >= maxprof:
+                    dirs[:] = []
+                dirs[:] = sorted(d for d in dirs if d not in PULAR and not d.startswith("."))[:60]
+                for d in dirs:
+                    vistos += 1
+                    if vistos > orcamento:
+                        return exatos, parciais
+                    baixo = d.lower()
+                    if baixo == nome:
+                        exatos.append(str(Path(raiz) / d))
+                    elif nome in baixo:
+                        parciais.append(str(Path(raiz) / d))
+            return exatos, parciais
+
+        exatos, parciais = varre(2, 2000)        # raso primeiro: cobre o caso comum
+        achados = exatos or parciais
+        if not achados:
+            exatos, parciais = varre(4, 8000)    # só então desce mais fundo
+            achados = exatos or parciais
+        if len(achados) == 1:
+            return self._send(json.dumps({"ok": True, "path": achados[0], "exato": False}).encode(),
+                              "application/json")
+        return self._send(json.dumps({"ok": False, "erro": "nao achei",
+                                      "candidatos": achados[:6]}).encode(), "application/json")
+
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/__err":
+        from urllib.parse import urlparse as _parse
+
+        caminho = _parse(self.path).path
+        if caminho not in ("/__err", "/__zoom", "/__save-text", "/__upload"):
             return self._send(b"{}", "application/json", 404)
         try:
             n = int(self.headers.get("content-length", "0"))
-            raw = self.rfile.read(n)[:8000]
+            teto = LIMITE_CORPO if caminho == "/__upload" else LIMITE_PASTE + 65536
+            raw = self.rfile.read(min(n, teto)) if n > 0 else b""
             data = json.loads(raw or b"{}")
         except Exception:
             data = {"msg": "<payload invalido>"}
+        if not isinstance(data, dict):
+            data = {"msg": "<payload invalido>"}
+        if caminho == "/__zoom":
+            return self._zoom(data)
+        if caminho == "/__save-text":
+            return self._save_text(data)
+        if caminho == "/__upload":
+            return self._upload(data)
         level = str(data.get("level", "?"))
         msg = redact(str(data.get("msg", "")))[:2000]
         # ruído conhecido: não polui o log
@@ -530,6 +758,18 @@ class Handler(BaseHTTPRequestHandler):
             if not SHIM.is_file():
                 return self._send(b"// shim ausente", "text/javascript")
             return self._send(SHIM.read_bytes(), "text/javascript; charset=utf-8")
+        if path == "/__file":
+            # miniatura/preview de um anexo já salvo (imagem, PDF, texto…).
+            # Exige o token da sessão e caminho dentro de $HOME — ver _servir_arquivo.
+            from urllib.parse import parse_qs
+
+            return self._servir_arquivo(parse_qs(urlparse(self.path).query))
+        if path == "/__resolver-pasta":
+            # "escolher pasta" no navegador: o usuário digita o caminho e aqui a
+            # gente confere/descobre. Ver _resolver_pasta.
+            from urllib.parse import parse_qs
+
+            return self._resolver_pasta(parse_qs(urlparse(self.path).query))
 
         rel = unquote(path).lstrip("/")
         # o bundle referencia os assets como "./assets/..." — normaliza
@@ -553,21 +793,30 @@ class Handler(BaseHTTPRequestHandler):
         if target.suffix == ".html":
             html = data.decode("utf-8", "replace")
             inj = PONTE % {"backend": json.dumps(BACKEND), "token": json.dumps(fetch_token()),
-                       "telemetria": "true" if TELEMETRIA else "false"}
+                       "telemetria": "true" if TELEMETRIA else "false",
+                       "base_w": json.dumps(BASE_W)}
             # UI de desktop numa tela de celular: a viewport CSS tem ~400px e o layout
             # do desktop precisa de 1000+. Renderiza numa viewport larga e deixa o
             # Chrome reduzir — assim o layout fica inteiro (e dá pra dar zoom).
+            #
+            # interactive-widget=resizes-content é OBRIGATÓRIO aqui, não enfeite:
+            # desde o Chrome 108 o teclado virtual do Android NÃO redimensiona mais
+            # o layout viewport (ele só cobre o conteúdo). Como esta UI tem altura
+            # fixa (100svh) com rolagem interna, o composer — que fica ancorado na
+            # base — sumia atrás do teclado. Com resizes-content o ICB encolhe junto
+            # com o teclado, as unidades de viewport acompanham e o composer sobe.
             largura = os.environ.get("HERMES_WEB_VIEWPORT_WIDTH", "")
             if largura:
+                meta_nova = (f'<meta name="viewport" content="width={largura}, '
+                             'interactive-widget=resizes-content">')
                 if re.search(r'<meta[^>]+name=["\']viewport["\'][^>]*>', html, flags=re.I):
                     html = re.sub(r'<meta[^>]+name=["\']viewport["\'][^>]*>',
-                                  f'<meta name="viewport" content="width={largura}">',
-                                  html, count=1, flags=re.I)
+                                  meta_nova, html, count=1, flags=re.I)
                 else:
                     # só a meta aqui: o inj entra UMA vez no bloco do </head> mais
                     # abaixo (injetar aqui também duplicava o <script> da ponte —
                     # duas conexões SSE, dois probes, shim registrado 2x)
-                    html = html.replace("</head>", f'<meta name="viewport" content="width={largura}"></head>', 1)
+                    html = html.replace("</head>", meta_nova + "</head>", 1)
             # CSS extra do porte (lista separada por vírgula). Inclui as fontes
             # embutidas em data URI: o wordmark usa a Collapse com font-display:swap e,
             # quando a requisição dela falha, a tela fica na fonte de sistema.

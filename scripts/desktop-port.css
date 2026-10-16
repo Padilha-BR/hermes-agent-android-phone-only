@@ -1,0 +1,157 @@
+/* desktop-port.css — ajustes para rodar a UI do app DESKTOP num navegador de celular.
+   Injetado pelo hermes-desktop-web.py (env HERMES_WEB_EXTRA_CSS) só na porta 8890.
+
+   REGRAS APRENDIDAS (não repetir):
+   1. NÃO forçar altura de nada com seletores largos ([class*="h-screen"],
+      .relative.isolate, div.flex.min-h-0). O app reusa essas classes em dezenas de
+      componentes (components/ui/card-stack.tsx usa "relative isolate") e o layout
+      deforma — cheguei a ver "só o balão na tela".
+   2. NÃO disparar `resize`: o app responde COLAPSANDO a barra lateral (vira o
+      rótulo "NEW SESSIONS" na vertical).
+   3. A causa real do composer fora da tela é a BARRA DE URL do Chrome, que não entra
+      no cálculo de dvh/lvh do app (medido: dvh=2405 vs janela visível=2233). Em modo
+      app instalado (display: standalone) não há barra de URL e as medidas coincidem.
+   Por isso aqui só fica o que NÃO participa do layout do app. */
+
+/* O conserto do composer: o app dimensiona a raiz com `h-screen` (100vh = viewport
+   GRANDE, calculada como se a barra de URL não existisse = 2405px) e ancora o
+   composer na base dela — a área visível é 2233px (barra de URL presente), então o
+   composer cai ~180px abaixo do corte. Com 100svh (viewport PEQUENA, com a barra de
+   URL) a raiz passa a medir exatamente o que está na tela e o composer volta.
+   Classe EXATA (.h-screen), nunca curinga [class*="h-screen"] — ver regra 1 acima.
+
+   TECLADO VIRTUAL (15/10/2026): esta altura fixa só acompanha o teclado porque o
+   injetor põe `interactive-widget=resizes-content` na meta de viewport. Desde o
+   Chrome 108 o padrão é o teclado COBRIR a página sem mexer no layout viewport —
+   com altura fixa e rolagem interna, o resultado era o composer atrás do teclado.
+   Não tire aquele atributo da meta sem testar digitando. */
+.h-screen {
+  height: 100svh !important;
+  max-height: 100svh !important;
+}
+
+/* barra de rolagem discreta (o app é escuro) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TOQUE NO ANDROID — comportamento, não aparência.
+   Nada aqui muda cor, tamanho, espaçamento ou tipografia: são os ajustes que
+   fazem uma página feita para mouse se comportar como app nativo no dedo.
+   Tudo atrás de `pointer: coarse` para não afetar um desktop (o mesmo injetor
+   pode servir a UI num navegador de computador).
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (pointer: coarse) {
+  /* O Android pinta uma caixa azul-acinzentada por cima do elemento tocado —
+     num tema escuro isso entrega na hora que "é site, não app". O feedback
+     tátil VISUAL continua, só que discreto e neutro (o app tem seus próprios
+     estados de hover/active). Para remover de vez: `transparent`. */
+  html {
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.08);
+  }
+
+  /* 300 ms de atraso: o navegador segura o clique esperando um duplo toque
+     para zoom. `manipulation` libera o clique na hora e mantém a rolagem.
+     Seletor de elemento de propósito: quem tem `touch-none` do Tailwind (alças
+     de arrastar, imagens) tem especificidade de CLASSE e continua ganhando. */
+  button, a, [role="button"], [role="menuitem"], [role="tab"], label, summary, input, textarea, select {
+    touch-action: manipulation;
+  }
+
+  /* Sem "encadeamento" de rolagem: ao chegar no fim de uma lista interna, a
+     rolagem não passa para o container de trás (era o efeito de borracha que
+     fazia a tela parecer escorregadia/travada). */
+  html, body {
+    overscroll-behavior: contain;
+  }
+}
+
+/* Containers de rolagem do app: sem rolagem encadeada (o "puxão" que levava a
+   página junto). Sem `!important` — quem já declara overscroll (o app declara em
+   várias listas) decide, isto só cobre o resto. */
+[class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"] {
+  overscroll-behavior: contain;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ALVOS DE DEDO NO COMPOSER — pedido do usuário (15/10/2026): "o botão de envio
+   e do microfone estão bem pequenos pra ficar clicando com o dedo".
+   Medido antes: os três botões redondos de ação tinham 24–26px CSS com ícone de
+   14px — no ajuste de 0,6 do porte isso dá ~14 dip ≈ 5 mm, contra os ~9 mm de
+   um dedo. Aqui só CRESCEM (mesma forma redonda, mesma cor, mesmos ícones): não
+   há mudança de desenho, só de tamanho. O ícone cresce junto, senão o botão
+   fica um anel vazio.
+   Os três (+, microfone e enviar) crescem juntos porque ficam na mesma fileira:
+   aumentar só dois deixaria a linha desalinhada. */
+[aria-label="Add context"],
+[aria-label="Voice dictation"],
+[aria-label="Stop dictation"],
+[aria-label="Send"],
+[aria-label="Stop"] {
+  /* O app dimensiona estes botões por VARIÁVEL
+     (styles.css: --composer-control-size 1.5rem = 24px · --composer-control-primary-size
+     1.625rem = 26px · control-classes.ts: size-(--composer-control-size) e
+     size-(--composer-control-primary-size,var(--composer-control-size))).
+     Mexer na variável NO PRÓPRIO BOTÃO é o caminho do app: só estes crescem, o
+     resto da fileira (pílula de modelo, botões de voz) fica como foi desenhado —
+     alargar a fileira inteira roubaria largura do campo de texto.
+     Rótulos: o MESMO botão troca de nome conforme o estado — enviar vira "Stop"
+     durante o turno, e o microfone vira "Stop dictation" enquanto dita
+     (controls.tsx:161 `showStop ? c.stop : c.send`; voice-fan.tsx:50
+     `dictating ? c.stopDictation : c.voiceDictation`). Se um estado faltasse
+     aqui, o botão ENCOLHIA no meio do uso. */
+  --composer-control-size: 2.125rem;         /* 24px → 34px */
+  --composer-control-primary-size: 2.25rem;  /* 26px → 36px */
+}
+[aria-label="Add context"] svg,
+[aria-label="Voice dictation"] svg,
+[aria-label="Stop dictation"] svg,
+[aria-label="Send"] svg,
+[aria-label="Stop"] svg,
+[aria-label="Add context"] i.codicon,
+[aria-label="Voice dictation"] i.codicon,
+[aria-label="Stop dictation"] i.codicon,
+[aria-label="Send"] i.codicon,
+[aria-label="Stop"] i.codicon {
+  width: 18px !important;
+  height: 18px !important;
+  font-size: 18px !important;
+}
+/* O glifo de PARAR é um quadradinho de 10px (size-2.5) fixo no código: num botão
+   maior ele fica pequeno demais, então cresce junto (mesma forma e cor). */
+[aria-label="Stop"] span.block {
+  width: 0.8125rem !important;
+  height: 0.8125rem !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DIVISOR DE PAINÉIS ("sash") NO DEDO — o slider lateral.
+   Medido (15/10/2026) no Chromium emulando o aparelho, arrasto de 60px CSS:
+   a faixa de pega tem 8px CSS (≈6 dip ≈ 1 mm, um dedo tem ~8 mm) e
+   `touch-action: auto` — o Chrome interpretou o arrasto como ROLAGEM e
+   CANCELOU o ponteiro no 3º movimento (pointercancel). Efeito no dedo: o divisor
+   anda um tico e para; as tentativas seguintes viram TOQUES, e dois toques
+   seguidos no divisor disparam o duplo-clique do app = "reset do painel"
+   (é o "vai de uma vez e eu tenho que voltar de pouco em pouco").
+   NÃO é a matemática do app: o arrasto é 1:1 em px CSS e usa setPointerCapture.
+
+   Correção em duas partes, as duas invisíveis:
+   1) `touch-action: none` — o gesto pertence ao divisor, não à rolagem.
+   2) mais largura para o dedo, SEM alargar a caixa que recebe o toque.
+      O alvo por CSS é CURTO de propósito: o app põe controles perto do fio —
+      a 25px o botão "+" do composer e a 20px o botão de status do turno (do
+      lado do chat), e o "Minimize" a 4px do outro lado. Um `::after` de 30px
+      COME esses botões (medido: o "+" ficou inclicável). Então o CSS cobre
+      -3px/+10px e a largura restante vive no JS (ver ZONA_FIO no shim), que só
+      redireciona o gesto quando o toque NÃO caiu em cima de um controle. */
+[data-sash-overlap] {
+  touch-action: none;
+}
+[data-sash-overlap]::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+}
+[data-sash-overlap][class*="w-[8px]"]::after { top: 0; bottom: 0; left: -3px; right: -10px; }
+[data-sash-overlap][class*="h-[8px]"]::after { left: 0; right: 0; top: -3px; bottom: -10px; }

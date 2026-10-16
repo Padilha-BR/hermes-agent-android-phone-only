@@ -1,15 +1,16 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# hermes-app — garante que o APP do Hermes (dashboard, porta 9119) esteja no ar.
-# O app é o lado "clicável" do Hermes no celular (icone Hermes na tela inicial).
-URL="http://127.0.0.1:9119"
-
-"$HOME/.hermes/scripts/dashboard-up.sh"
-H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL/api/health" 2>/dev/null)
-if [ "$H" = "200" ]; then
-  echo "App do Hermes: NO AR."
-  echo "Toque no icone 'Hermes' da tela inicial (ou abra $URL)."
-  termux-open-url "$URL" >/dev/null 2>&1 &
-else
-  echo "App do Hermes: NAO subiu (health=$H). Veja ~/.hermes/logs/dashboard.log"
+# hermes-app — sobe o backend e abre O APP do Hermes (o ícone da tela inicial dele).
+#
+# Correção de 15/10/2026: o ícone "Hermes" na tela inicial é um WebAPK do Chrome
+# apontando pra UI portada do desktop em http://127.0.0.1:8890 — NÃO é a 9119.
+# A 9119 é backend/dashboard-xterm: ela precisa estar no ar (a UI fala com ela por
+# WebSocket), mas abrir 9119 como "o app" joga o usuário numa aba nova do Chrome,
+# no painel errado. Quem abre o app é o `hermes-voltar` (pacote do WebAPK).
+"$HOME/.hermes/scripts/dashboard-up.sh" >/dev/null 2>&1
+H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9119/api/health" 2>/dev/null)
+echo "Backend (9119): http=$H  [dashboard/terminal — não é o app]"
+if [ "$H" != "200" ]; then
+  echo "Backend NÃO subiu — veja ~/.hermes/logs/dashboard.log"
   exit 1
 fi
+exec "$HOME/.hermes/bin/hermes-voltar" abrir

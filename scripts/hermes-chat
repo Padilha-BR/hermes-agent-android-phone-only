@@ -10,14 +10,7 @@ mkdir -p "$H/logs"
 
 [ -f "$APP/index.html" ] || { echo "app de chat ainda nao existe em $APP"; exit 1; }
 
-if ! curl -s -o /dev/null --max-time 3 "$URL/__health"; then
-  HERMES_DESKTOP_WEB="$APP" HERMES_DESKTOP_WEB_PORT="$PORT" \
-  HERMES_WEB_LOG="$H/logs/chat-telemetria.log" \
-    setsid nohup python "$H/bin/hermes-desktop-web.py" >>"$LOG" 2>&1 </dev/null &
-  for _ in $(seq 1 15); do sleep 1; curl -s -o /dev/null --max-time 3 "$URL/__health" && break; done
-fi
-
-curl -s -o /dev/null --max-time 3 "$URL/__health" || { echo "nao subiu — veja $LOG"; exit 1; }
+"$H/bin/hermes-chat-up" || { echo "nao subiu — veja $LOG"; exit 1; }
 
 echo "Chat do Hermes no ar: $URL"
 echo -n "$URL" | termux-clipboard-set 2>/dev/null
