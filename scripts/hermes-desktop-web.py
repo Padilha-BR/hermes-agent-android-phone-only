@@ -248,6 +248,46 @@ def fetch_token() -> str:
     return ""
 
 
+def gravar_atomico(destino: Path, dados: bytes, alternativa=None) -> Path:
+    """Grava num temporário 0600 do mesmo diretório e só então publica.
+
+    Sem isso (write_text/write_bytes direto) um corte no meio — bateria, OOM,
+    o Android matando o Termux — deixava arquivo pela metade: o viewport
+    salvo virava "" e o próximo boot caía no padrão; o anexo truncado ia para
+    o agente como se fosse o arquivo inteiro.
+
+    `alternativa` (função que devolve outro Path) liga o modo SEM SOBRESCREVER:
+    publica com os.link, que falha se o nome já existe, e tenta o nome
+    alternativo — dois anexos com o mesmo nome no mesmo segundo não se
+    apagam mais. Sem hard link (SELinux de alguns Androids) cai para o nome
+    alternativo com os.replace. Devolve o caminho publicado."""
+    tmp = destino.with_name(f".{destino.name}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(dados)
+        if alternativa is None:
+            os.replace(tmp, destino)
+            return destino
+        alvo = destino
+        for _ in range(5):
+            try:
+                os.link(tmp, alvo)
+                return alvo
+            except FileExistsError:
+                alvo = alternativa()
+            except OSError:
+                alvo = alternativa()
+                os.replace(tmp, alvo)
+                return alvo
+        raise FileExistsError(str(destino))
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def redact(text: str) -> str:
     """Nunca deixa o token da sessão cair em log/arquivo em texto puro."""
     for tok in list(TOKENS_VISTOS):
@@ -669,7 +709,7 @@ class Handler(BaseHTTPRequestHandler):
         arq = HERMES_HOME / "state" / "desktop-web-viewport"
         try:
             arq.parent.mkdir(parents=True, exist_ok=True)
-            arq.write_text(str(w), encoding="utf-8")
+            gravar_atomico(arq, str(w).encode())
         except OSError as exc:
             return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
                               "application/json", 500)
@@ -691,8 +731,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             PASTES.mkdir(parents=True, exist_ok=True)
             nome = "paste-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6] + ".txt"
-            destino = PASTES / nome
-            destino.write_text(texto, encoding="utf-8")
+            destino = gravar_atomico(PASTES / nome, texto.encode("utf-8"))
         except OSError as exc:
             return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
                               "application/json", 500)
@@ -731,12 +770,13 @@ class Handler(BaseHTTPRequestHandler):
         if ext and not limpo.lower().endswith("." + ext.lower()):
             limpo += "." + ext
         carimbo = time.strftime("%Y%m%d-%H%M%S")
-        destino = ANEXOS / f"{carimbo}-{limpo}"
         try:
             ANEXOS.mkdir(parents=True, exist_ok=True)
-            if destino.exists():
-                destino = ANEXOS / f"{carimbo}-{uuid.uuid4().hex[:4]}-{limpo}"
-            destino.write_bytes(conteudo)
+            # exists()+write_bytes tinha corrida (dois envios no mesmo segundo
+            # sobrescreviam um ao outro); gravar_atomico publica sem sobrescrever
+            destino = gravar_atomico(
+                ANEXOS / f"{carimbo}-{limpo}", conteudo,
+                alternativa=lambda: ANEXOS / f"{carimbo}-{uuid.uuid4().hex[:4]}-{limpo}")
         except OSError as exc:
             return self._send(json.dumps({"ok": False, "erro": str(exc)}).encode(),
                               "application/json", 500)
