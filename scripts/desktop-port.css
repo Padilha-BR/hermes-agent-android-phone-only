@@ -155,3 +155,17 @@
 }
 [data-sash-overlap][class*="w-[8px]"]::after { top: 0; bottom: 0; left: -3px; right: -10px; }
 [data-sash-overlap][class*="h-[8px]"]::after { left: 0; right: 0; top: -3px; bottom: -10px; }
+
+/* ── COPIAR TEXTO ─────────────────────────────────────────────────────────────
+   O shell do app tem `user-select: none` no <body> (comportamento de app de
+   mesa). No celular isso mata o gesto de segurar-o-dedo para selecionar, então
+   o toque longo abria o menu do app e nunca dava para copiar. Aqui devolvemos a
+   seleção a todo conteúdo textual — inclusive dentro dos blocos `select=none`
+   que envolvem a mensagem (a mensagem em si herda `text`, o invólucro não). */
+p, li, pre, code, blockquote, td, th,
+h1, h2, h3, h4, h5, h6,
+.wrap-anywhere, [class*="prose"], [data-selectable] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}

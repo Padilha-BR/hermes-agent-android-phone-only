@@ -972,6 +972,129 @@
     instalarZonaDivisor();
   } catch (e) {}
 
+  // 4) toque longo = selecionar texto + botão Copiar (o gesto nativo não funciona aqui)
+  try {
+    instalarSelecaoPorToque();
+  } catch (e) { log('seleção por toque não instalou: ' + e); }
+
+  // ── TEXTO: toque longo para selecionar e copiar ─────────────────────────
+  // No Android, "segurar o dedo" é o gesto de selecionar texto — e nesta UI ele
+  // NÃO seleciona nada: o shell do app desliga `user-select` no <body> e o gesto
+  // acaba abrindo o menu de contexto do próprio app (o usuário relatou "aparece
+  // aquela coisa de New session e nunca dá pra copiar"). Aqui o toque longo é
+  // interpretado por nós: seleciona o parágrafo sob o dedo e oferece "Copiar"
+  // num balão próprio, usando o writeClipboard que já copia de verdade.
+  let selTimer = null, selAlvo = null, selBolha = null, selToque = null;
+
+  function selecionavel(el) {
+    while (el && el !== document.body) {
+      if (/^(BUTTON|A|INPUT|TEXTAREA|SELECT|OPTION)$/.test(el.tagName)) return null;
+      const cs = getComputedStyle(el);
+      const us = cs.userSelect || cs.webkitUserSelect;
+      if (us === 'text') return el;
+      if (us === 'none' && el.nodeType === 1 && el !== document.body) {
+        // continua subindo: um filho pode reabilitar (é o caso das mensagens)
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function esconderBolha() {
+    if (selBolha && selBolha.parentNode) selBolha.parentNode.removeChild(selBolha);
+    selBolha = null;
+  }
+
+  function balaoCopiar(texto, x, y) {
+    esconderBolha();
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Copiar';
+    b.setAttribute('aria-label', 'Copiar texto selecionado');
+    b.style.cssText = [
+      'position:fixed', 'z-index:2147483647', 'transform:translate(-50%,-140%)',
+      'background:#1b1b21', 'color:#e6e6ea', 'border:1px solid #2c2c35',
+      'border-radius:999px', 'padding:10px 18px', 'font:600 15px system-ui,sans-serif',
+      'box-shadow:0 6px 20px rgba(0,0,0,.45)', 'touch-action:manipulation'
+    ].join(';');
+    b.style.left = Math.max(60, Math.min(window.innerWidth - 60, x)) + 'px';
+    b.style.top = Math.max(60, y) + 'px';
+    b.addEventListener('click', async (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      try {
+        await bridge.writeClipboard(texto);
+        b.textContent = 'Copiado';
+        setTimeout(esconderBolha, 900);
+      } catch (e) {
+        b.textContent = 'Falhou';
+        setTimeout(esconderBolha, 1200);
+      }
+    });
+    document.body.appendChild(b);
+    selBolha = b;
+  }
+
+  function selecionarNoToque(alvo, x, y) {
+    if (!alvo) return;
+    // não rouba seleção que o próprio navegador já fez (se um dia voltar a funcionar)
+    const atual = (window.getSelection() || {}).toString().trim();
+    if (atual.length > 2) return;
+    try {
+      const r = document.createRange();
+      r.selectNodeContents(alvo);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      const texto = (s.toString() || '').trim();
+      if (texto.length >= 3) balaoCopiar(texto, x, y);
+    } catch (e) { log('seleção falhou: ' + e); }
+  }
+
+  function instalarSelecaoPorToque() {
+    document.addEventListener('touchstart', (ev) => {
+      if (ev.touches.length !== 1) return;
+      const t = ev.touches[0];
+      selToque = { x: t.clientX, y: t.clientY };
+      selAlvo = selecionavel(ev.target);
+      if (!selAlvo) { esconderBolha(); return; }
+      clearTimeout(selTimer);
+      selTimer = setTimeout(() => selecionarNoToque(selAlvo, selToque.x, selToque.y), 450);
+    }, { passive: true, capture: true });
+
+    const cancelar = () => { clearTimeout(selTimer); };
+    document.addEventListener('touchend', cancelar, { passive: true, capture: true });
+    document.addEventListener('touchcancel', cancelar, { passive: true, capture: true });
+    document.addEventListener('touchmove', () => {
+      cancelar();
+      // arrastar o dedo depois do toque longo = ajustar a seleção: fecha o balão
+      if (selBolha) esconderBolha();
+    }, { passive: true, capture: true });
+    // toque em qualquer outro lugar fecha o balão
+    document.addEventListener('touchstart', (ev) => {
+      if (selBolha && !selBolha.contains(ev.target)) esconderBolha();
+    }, { passive: true, capture: true });
+
+    // O MENU DE ABAS: segurar o dedo em qualquer texto abre o menu de contexto
+    // da aba ("Reload / Close others / Close all…") — é o "New session" que o
+    // usuário via. Ele nasce de pointerdown/long-press (Radix), não de
+    // contextmenu, então barramos o pointerdown de toque em texto legível: o
+    // app não vê o gesto e o menu não abre. Clique (mouse) segue intacto e os
+    // botões da mensagem continuam funcionando (selecionavel() os exclui).
+    document.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType === 'mouse') return;
+      if (selecionavel(ev.target)) ev.stopPropagation();
+    }, true);
+
+    // o menu de contexto do próprio app não pode abrir POR CIMA do balão quando
+    // o toque longo já virou seleção nossa (era ele que aparecia antes de tudo)
+    document.addEventListener('contextmenu', (ev) => {
+      if (selBolha && selecionavel(ev.target)) {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+      }
+    }, true);
+  }
+
   log('ponte instalada → backend', BACKEND, '| perfil', PROFILE, '| token', TOKEN ? 'ok' : 'AUSENTE');
   emit(snapshot());
 })();
