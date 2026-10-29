@@ -44,11 +44,25 @@ guardar() {
 }
 # instala <origem> em <destino> com o modo dado; pula se já é idêntico
 instalar() {
-  local src="$1" dst="$2" modo="$3"
-  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
-    iguais=$((iguais+1))
-    [ "$DRY" = 1 ] || chmod "$modo" "$dst"
-    return 0
+  local src="$1" dst="$2" modo="$3" igual=0
+  if [ -f "$dst" ]; then
+    if cmp -s "$src" "$dst"; then
+      igual=1
+    else
+      # O conserto de shebang (Android 17) grava no DESTINO o caminho do env do
+      # Termux; o repositório guarda `#!/usr/bin/env`. Sem comparar ignorando
+      # esse caminho, todo arquivo com shebang se recopiava em TODA execução e o
+      # install deixava de ser idempotente (a CI falhava no `instalados: 0`).
+      if [ "$(sed '1s|^#![^[:space:]]*/env |#!/env |' "$src" | cksum)" = \
+           "$(sed '1s|^#![^[:space:]]*/env |#!/env |' "$dst" | cksum)" ]; then
+        igual=1
+      fi
+    fi
+    if [ "$igual" = 1 ]; then
+      iguais=$((iguais+1))
+      [ "$DRY" = 1 ] || chmod "$modo" "$dst"
+      return 0
+    fi
   fi
   if [ "$DRY" = 1 ]; then echo "  copiaria $src → $dst"; copiados=$((copiados+1)); return 0; fi
   mkdir -p "$(dirname "$dst")" || return 1
