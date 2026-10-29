@@ -4,6 +4,9 @@
 # Estratégia: start rápido (--skip-build); se não subir em 40s, tenta build completo
 # (com backoff: build completo que falha não se repete a cada minuto).
 export PATH=/data/data/com.termux/files/usr/bin:$PATH
+# Mesma razão do watchdog: PYTHONPATH herdado fixa o code tree antigo e o
+# dashboard passa a servir o web_dist da geração anterior.
+unset PYTHONPATH
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 LOG="$HERMES_HOME/logs/dashboard.log"
 URL="http://127.0.0.1:9119"

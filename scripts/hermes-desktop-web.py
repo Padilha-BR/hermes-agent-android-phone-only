@@ -29,6 +29,9 @@ import json
 import os
 import re
 import secrets
+import shlex
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -83,6 +86,7 @@ LIMITE_PASTE = 2 * 1024 * 1024
 # disco, que é o que o app (e o agente, com cwd=$HOME) sabe usar.
 ANEXOS = HOME / "attachments"
 LIMITE_ANEXO = 24 * 1024 * 1024          # por arquivo, antes do base64
+LIMITE_TRANSFERENCIA = 1024 * 1024 * 1024  # download direto p/ disco (streaming, sem tocar a RAM)
 LIMITE_CORPO = 40 * 1024 * 1024          # teto do corpo recebido (base64 infla 4/3)
 # remendos que só fazem sentido no app do desktop portado (8890): Object.prototype.trim,
 # matchMedia fixado e reset das chaves de layout. No chat (8891) eram poluição pura.
@@ -306,6 +310,67 @@ def gravar_atomico(destino: Path, dados: bytes, alternativa=None) -> Path:
             tmp.unlink()
         except OSError:
             pass
+
+
+def _copiar_em_blocos(origem: Path, destino: Path, bloco: int = 1024 * 1024) -> Path:
+    """Copia um arquivo grande em blocos até o destino, publicando por rename.
+
+    Ler 200 MB de PDF com read_bytes() custa 2× em RAM (bytes + cópia) e o
+    Android mata o Termux antes de terminar. Aqui a memória usada é um bloco.
+    Mesmo contrato do gravar_atomico: temporário 0600 no mesmo diretório e só
+    publica quando o último byte chegou — download interrompido não deixa
+    arquivo pela metade com nome final.
+    """
+    tmp = destino.with_name(f".{destino.name}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as saida, origem.open("rb") as entrada:
+            shutil.copyfileobj(entrada, saida, bloco)
+        os.replace(tmp, destino)
+        return destino
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _android_avisar(destino: Path, nome: str) -> None:
+    """Faz o Android ENXERGAR o arquivo baixado e avisa o usuário.
+
+    Por que existe: o Download compartilhado do Android é uma pasta do
+    MediaStore, não um diretório comum. Arquivo escrito pelo Termux em
+    ~/storage/downloads chega ao disco mas NÃO aparece no app Arquivos/Downloads
+    nem na lista de downloads do Chrome até alguém pedir o scan — o usuário
+    clica em baixar, o arquivo existe, e ele conclui (com razão, do ponto de
+    vista dele) que o botão não funciona. O scan resolve a visibilidade; a
+    notificação resolve o "será que baixou?".
+    """
+    def _run() -> None:
+        alvos = []
+        scan = shutil.which("termux-media-scan")
+        if scan:
+            alvos.append([scan, "-v", str(destino)])
+        else:
+            log("[download] termux-media-scan ausente: o arquivo pode nao aparecer no app Arquivos")
+        aviso = shutil.which("termux-notification")
+        if aviso:
+            alvos.append([aviso, "--id", "hermes-download",
+                          "--title", "Hermes: arquivo baixado",
+                          "--content", f"{nome} → pasta Download",
+                          "--button1", "Abrir",
+                          "--button1-action", f"termux-open {shlex.quote(str(destino))}"])
+        feitos = []
+        for cmd in alvos:
+            try:
+                subprocess.run(cmd, timeout=25, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+                feitos.append(Path(cmd[0]).name)
+            except Exception as exc:  # termux-api fora do ar, timeout, permissão
+                log(f"[download] {Path(cmd[0]).name} falhou: {uma_linha(repr(exc))}")
+        log(f"[download] android: {', '.join(feitos) or 'nada rodou'} → {nome}")
+
+    threading.Thread(target=_run, name="android-download", daemon=True).start()
 
 
 def redact(text: str) -> str:
@@ -581,19 +646,27 @@ const __TELEMETRIA__ = %(telemetria)s;
   // isso sobrevive a recargas. Zerar SÓ as chaves de layout devolve o padrão
   // (sessions | workspace | rail da direita) sem tocar em tema/fonte/preferências
   // — zerar tudo apagou preferência visual do usuário e isso foi um erro meu.
+  //
+  // ATENÇÃO: isto rodava a CADA carga e apagava o layout do usuário toda vez que
+  // ele abria o app (o log repetia "layout do app zerado" em cada boot). Agora é
+  // UMA vez, marcado por versão: quem organiza os painéis mantém a organização.
   if (FLAGS.desktop) try {
-    const LAYOUT = [
-      'hermes.desktop.paneStates.v1', 'hermes.desktop.layoutTree.v2',
-      'hermes.desktop.layoutPreset.active', 'hermes.desktop.dismissedPanes.v1',
-      'hermes.desktop.paneShare.v1', 'hermes.desktop.paneSharePartners.v1',
-      'hermes.desktop.hiddenStripTabs.v1', 'hermes.desktop.userPlacedPanes.v1',
-      'hermes.desktop.panesFlipped', 'hermes.desktop.collapsedTreeSides.v1',
-      'hermes.desktop.floatingPanes.v1'
-    ];
-    const tiradas = LAYOUT.filter((k) => localStorage.getItem(k) !== null);
-    if (tiradas.length) {
-      tiradas.forEach((k) => localStorage.removeItem(k));
-      env('fix', 'layout do app zerado (' + tiradas.length + ' chaves) → padrão');
+    const MARCADOR_LAYOUT = 'hermes.webPort.layoutReset.v1';
+    if (!localStorage.getItem(MARCADOR_LAYOUT)) {
+      const LAYOUT = [
+        'hermes.desktop.paneStates.v1', 'hermes.desktop.layoutTree.v2',
+        'hermes.desktop.layoutPreset.active', 'hermes.desktop.dismissedPanes.v1',
+        'hermes.desktop.paneShare.v1', 'hermes.desktop.paneSharePartners.v1',
+        'hermes.desktop.hiddenStripTabs.v1', 'hermes.desktop.userPlacedPanes.v1',
+        'hermes.desktop.panesFlipped', 'hermes.desktop.collapsedTreeSides.v1',
+        'hermes.desktop.floatingPanes.v1'
+      ];
+      const tiradas = LAYOUT.filter((k) => localStorage.getItem(k) !== null);
+      if (tiradas.length) {
+        tiradas.forEach((k) => localStorage.removeItem(k));
+        env('fix', 'layout do app zerado (' + tiradas.length + ' chaves) → padrão (uma vez)');
+      }
+      localStorage.setItem(MARCADOR_LAYOUT, '1');
     }
   } catch (e) {}
 })();
@@ -776,7 +849,10 @@ class Handler(BaseHTTPRequestHandler):
         if "," in bruto and bruto.lstrip().startswith("data:"):
             bruto = bruto.split(",", 1)[1]
         try:
-            conteudo = base64.b64decode(bruto, validate=False)
+            # validate=True: base64 com lixo (ou truncado) virava arquivo binário
+            # corrompido em $HOME/attachments — o usuário anexava e o agente lia
+            # lixo. Antes de validar, tira o espaçamento que data URLs costumam ter.
+            conteudo = base64.b64decode(re.sub(r"\s+", "", bruto), validate=True)
         except Exception:
             return self._send(b'{"ok":false,"erro":"base64 invalido"}', "application/json", 400)
         if len(conteudo) == 0:
@@ -823,18 +899,66 @@ class Handler(BaseHTTPRequestHandler):
         if not pedido:
             return self._json({"ok": False, "erro": "sem path"}, 400)
         origem: Path
+        conteudo = b""
+        stream_de: Path | None = None
+        url_de: str = ""
+        # Caminho RELATIVO de API ("/api/sessions/.../files/x", "/media/...") não é
+        # arquivo no disco nem URL absoluta: é o backend servindo o arquivo. Antes
+        # caía em "nao existe" e o botão parecia morto justamente nos arquivos que
+        # o agente produz (eles vêm por essa rota).
+        if (pedido.startswith("/") and not pedido.startswith("//")
+                and re.match(r"^/(api|v1|media|files|static)/", pedido)
+                and not Path(pedido).exists()):
+            url_de = f"{BACKEND}{pedido}"
+            pedido = url_de
         if re.match(r"^https?://", pedido, re.I):
+            cabecalhos = {}
+            if url_de:  # rota do próprio gateway: leva o token de sessão
+                tok = LAST_TOKEN or fetch_token()
+                if tok:
+                    cabecalhos["Authorization"] = f"Bearer {tok}"
             try:
-                with urllib.request.urlopen(pedido, timeout=30) as resp:
+                req = urllib.request.Request(pedido, headers=cabecalhos)
+                with urllib.request.urlopen(req, timeout=60) as resp:
                     conteudo = resp.read(LIMITE_ANEXO + 1)
+                    disp = resp.headers.get("content-disposition", "")
             except Exception as exc:  # rede, 404 do gateway, TLS…
                 return self._json({"ok": False, "erro": f"download falhou: {exc}"}, 502)
             if len(conteudo) > LIMITE_ANEXO:
                 return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
-            origem = Path(unquote(urlparse(pedido).path))
+            nome_url = ""
+            m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disp)
+            if m:
+                nome_url = unquote(m.group(1).strip())
+            origem = Path(nome_url or unquote(urlparse(pedido).path))
         else:
             if pedido.startswith("file://"):
                 pedido = unquote(urlparse(pedido).path)
+            elif (re.match(r"^(api|v1|media|files)/", pedido)
+                    and not (HOME / pedido).exists()):
+                # mesma ideia, sem a barra inicial
+                url_de = f"{BACKEND}/{pedido}"
+                pedido = url_de
+            if url_de:
+                cabecalhos = {}
+                tok = LAST_TOKEN or fetch_token()
+                if tok:
+                    cabecalhos["Authorization"] = f"Bearer {tok}"
+                try:
+                    req = urllib.request.Request(pedido, headers=cabecalhos)
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        conteudo = resp.read(LIMITE_ANEXO + 1)
+                        disp = resp.headers.get("content-disposition", "")
+                except Exception as exc:
+                    return self._json({"ok": False, "erro": f"download falhou: {exc}"}, 502)
+                if len(conteudo) > LIMITE_ANEXO:
+                    return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
+                m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disp)
+                origem = Path((unquote(m.group(1).strip()) if m else "")
+                              or unquote(urlparse(pedido).path))
+                bruto = str(data.get("name") or data.get("suggestedName") or "").strip()
+                nome = re.sub(r"[/\\\x00]", "_", bruto) or origem.name or "arquivo"
+                return self._gravar_download(nome, origem, conteudo, None)
             try:
                 origem = (Path(pedido) if Path(pedido).is_absolute() else (HOME / pedido)).resolve()
                 origem.relative_to(HOME.resolve())
@@ -845,15 +969,34 @@ class Handler(BaseHTTPRequestHandler):
             if not origem.is_file():
                 return self._json({"ok": False, "erro": "nao existe"}, 404)
             try:
-                if origem.stat().st_size > LIMITE_ANEXO:
-                    return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
-                conteudo = origem.read_bytes()
+                tamanho = origem.stat().st_size
             except OSError as exc:
                 return self._json({"ok": False, "erro": str(exc)}, 500)
+            if tamanho > LIMITE_ANEXO:
+                # Arquivo grande (PDF de slide, vídeo): não cabe em memória com
+                # folga, e recusar era o segundo motivo de "não baixa". Copia em
+                # blocos, com teto e checagem de espaço livre.
+                if tamanho > LIMITE_TRANSFERENCIA:
+                    return self._json({"ok": False, "erro": "arquivo grande demais"}, 413)
+                stream_de = origem
+            else:
+                try:
+                    conteudo = origem.read_bytes()
+                except OSError as exc:
+                    return self._json({"ok": False, "erro": str(exc)}, 500)
         # nome: o que o app sugeriu; sem ele, o nome de origem. Sem barra e sem
         # NUL (um nome com "/" escreveria fora da pasta escolhida).
         bruto = str(data.get("name") or data.get("suggestedName") or "").strip()
         nome = re.sub(r"[/\\\x00]", "_", bruto) or origem.name or "arquivo"
+        return self._gravar_download(nome, origem, conteudo, stream_de)
+
+    def _gravar_download(self, nome: str, origem: Path, conteudo: bytes,
+                         stream_de: Path | None) -> None:
+        """Grava o download na pasta pública e devolve o caminho pra UI.
+
+        Separado do _save_file porque as duas origens (bytes em memória e
+        arquivo grande em blocos) terminam exatamente aqui.
+        """
         for pasta in (HOME / "storage" / "downloads", HOME / "downloads-hermes"):
             try:
                 pasta.mkdir(parents=True, exist_ok=True)
@@ -864,13 +1007,24 @@ class Handler(BaseHTTPRequestHandler):
                     # não sobrescreve o que já está lá (pode ser o arquivo que
                     # ele acabou de baixar); marca a hora em vez de perder
                     destino = pasta / f"{Path(nome).stem}-{time.strftime('%H%M%S')}{Path(nome).suffix}"
-                gravar_atomico(destino, conteudo)
+                if stream_de is not None:
+                    livre = shutil.disk_usage(pasta).free
+                    if livre < stream_de.stat().st_size + 50 * 1024 * 1024:
+                        return self._json({"ok": False, "erro": "sem espaco no aparelho"}, 507)
+                    destino = _copiar_em_blocos(stream_de, destino)
+                    tamanho = destino.stat().st_size
+                else:
+                    gravar_atomico(destino, conteudo)
+                    tamanho = len(conteudo)
             except OSError as exc:
                 log(f"[download] {pasta} falhou: {exc}")
                 continue
-            log(f"[download] {len(conteudo)} bytes → {destino}")
+            log(f"[download] {tamanho} bytes → {destino}")
+            # Visibilidade no Android + aviso: sem isso o arquivo existe e o
+            # usuário continua achando que o botão não funciona.
+            _android_avisar(destino, destino.name)
             return self._json({"ok": True, "saved": str(destino), "path": str(destino),
-                               "name": destino.name, "bytes": len(conteudo)})
+                               "name": destino.name, "bytes": tamanho})
         return self._json({"ok": False, "erro": "sem pasta gravavel"}, 500)
 
     def _servir_arquivo(self, q) -> None:
@@ -1132,12 +1286,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._bump()
         if path == "/__cmd":
             return self._cmd(post=False)
+        if path in ("/icon-192.png", "/icon-512.png", "/favicon.ico", "/apple-touch-icon.png"):
+            # O manifesto PWA aponta para estes ícones; sem estas rotas o Chrome
+            # baixava 404 e avisava "icon from the Manifest ... not a valid image"
+            # (o app instalado ficava sem ícone em qualquer reinstalação).
+            return self._icone(path)
         if path == "/__manifest.webmanifest":
             # instalável como app próprio. (O PONTE é `%`-formatado, não f-string:
             # aqui é JSON gerado em Python, sem chave dobrada nenhuma.)
             man = {
-                "name": "Hermes (cara do desktop)",
-                "short_name": "Hermes desktop",
+                "name": "Hermes (cara do PC)",
+                "short_name": "Hermes PC",
                 "start_url": "/",
                 "scope": "/",
                 "display": "standalone",
@@ -1280,6 +1439,54 @@ self.addEventListener('fetch', (e) => {
         finally:
             if flag in RELOAD_FLAGS:
                 RELOAD_FLAGS.remove(flag)
+
+    def _icone(self, path: str) -> None:
+        """Serve /icon-192.png, /icon-512.png, /favicon.ico e /apple-touch-icon.png.
+
+        O manifesto PWA (e o <link rel=icon> do bundle) apontam para estes
+        caminhos; o injetor só servia o BUNDLE, então todos davam 404 e o Chrome
+        avisava que o ícone do manifesto não era uma imagem válida.
+        Ordem: ícones prontos de ~/hermes-app → recorte/redimensionamento do
+        apple-touch-icon do bundle (Pillow) → 404 honesto (sem inventar PNG).
+        O resultado fica em cache no disco (state/app-icons) para não reprocessar.
+        """
+        tamanho = {"/icon-192.png": 192, "/favicon.ico": 192,
+                   "/icon-512.png": 512, "/apple-touch-icon.png": 180}.get(path, 192)
+        cache = HERMES_HOME / "state" / "app-icons" / f"icon-{tamanho}.png"
+        if cache.is_file():
+            return self._send(cache.read_bytes(), "image/png",
+                              cache="public, max-age=86400")
+        candidatos = [HOME / "hermes-app" / f"icon-{tamanho}.png",
+                      HOME / "hermes-app" / "icon-512.png",
+                      BUNDLE / "apple-touch-icon.png",
+                      BUNDLE / "hermes.png"]
+        origem = next((c for c in candidatos if c.is_file()), None)
+        if origem is None:
+            return self._send(b"nao encontrado", "text/plain", 404)
+        try:
+            from PIL import Image
+            with Image.open(origem) as img:
+                img = img.convert("RGBA")
+                lado = min(img.size)
+                esq = (img.width - lado) // 2
+                topo = (img.height - lado) // 2
+                quadrado = img.crop((esq, topo, esq + lado, topo + lado))
+                if quadrado.width != tamanho:
+                    quadrado = quadrado.resize((tamanho, tamanho), Image.LANCZOS)
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                tmp = cache.with_suffix(".tmp")
+                quadrado.save(tmp, format="PNG", optimize=True)
+                os.replace(tmp, cache)
+            log(f"[icone] {path} gerado de {origem.name} ({tamanho}px)")
+        except Exception as exc:  # Pillow ausente ou imagem ilegível: serve o original
+            log(f"[icone] sem Pillow para {path} ({type(exc).__name__}: {exc}) — servindo o original")
+            try:
+                return self._send(origem.read_bytes(), "image/png",
+                                  cache="public, max-age=86400")
+            except OSError:
+                return self._send(b"nao encontrado", "text/plain", 404)
+        return self._send(cache.read_bytes(), "image/png",
+                          cache="public, max-age=86400")
 
     def _estatico(self, path: str) -> None:
         rel = unquote(path).lstrip("/")

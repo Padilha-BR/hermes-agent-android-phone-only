@@ -3,6 +3,10 @@
 # Guarda de instância única (flock, ou pidfile como reserva); checa a cada 60s e
 # ressuscita se cair — com backoff quando o dashboard insiste em não subir.
 export PATH=/data/data/com.termux/files/usr/bin:$PATH
+# Um PYTHONPATH herdado (sessão do agente, snapshot da instalação antiga) fixa o
+# code tree na geração anterior e o dashboard serve o web_dist velho. Este script
+# tem de valer pelo `hermes` do PATH, não pelo ambiente de quem o chamou.
+unset PYTHONPATH
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PIDFILE="$HERMES_HOME/state/dashboard-watchdog.pid"
 LOCK="$HERMES_HOME/state/dashboard-watchdog.lock"

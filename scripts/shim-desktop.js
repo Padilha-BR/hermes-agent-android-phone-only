@@ -307,6 +307,7 @@
             avisarAnexoFalhou(msg);
           }
         }
+        log('anexos: ' + escolhidos.length + ' escolhido(s) → ' + caminhos.length + ' caminho(s)');
         terminar(caminhos);
       };
       entrada.oncancel = () => terminar([]);   // Chrome 113+ — cancelamento real
@@ -635,7 +636,84 @@
     // resto dos stubs de `settings` (o Object.assign com os stubs era redundante)
     settings: {
       getDefaultProjectDir: async () => ({ dir: '/data/data/com.termux/files/home' }),
-      pickDefaultProjectDir: () => escolherPastaDeTrabalho()
+      pickDefaultProjectDir: () => escolherPastaDeTrabalho(),
+      // `set` gravava em lugar nenhum (stub): a escolha do usuário não voltava
+      // na próxima abertura. Aqui persiste no localStorage da aba/app.
+      setDefaultProjectDir: async (dir) => {
+        try {
+          if (dir) localStorage.setItem('hermes.desktop.defaultProjectDir.v1', String(dir));
+          else localStorage.removeItem('hermes.desktop.defaultProjectDir.v1');
+        } catch (e) {}
+        return { dir: dir ? String(dir) : null };
+      }
+    },
+    // ── chaves do contrato em que o app JÁ tem fallback de navegador ────────
+    // O gerador cria um stub para TODA chave do contrato. Quando o app faz
+    // `const native = bridge.X; if (native) native.call()`, o stub é TRUTHY e
+    // derruba o caminho de fallback — foi assim que o composer passou a
+    // imprimir "Invalid prepared submission journal" (o stub devolvia objeto no
+    // lugar do JSON do diário). Aqui as que têm equivalente real no navegador.
+    preparedSubmissions: (() => {
+      const CHAVE = 'hermes.desktop.preparedSubmissions.v1';
+      const ler = () => {
+        try {
+          const cru = JSON.parse(localStorage.getItem(CHAVE) || '{}');
+          return cru && typeof cru === 'object' && !Array.isArray(cru) ? cru : {};
+        } catch (e) { return {}; }
+      };
+      const gravar = (j) => { try { localStorage.setItem(CHAVE, JSON.stringify(j)); } catch (e) {} };
+      return {
+        read: async () => JSON.stringify(ler()),
+        update: async (chave, entrada) => {
+          const j = ler();
+          if (entrada === null || entrada === undefined) delete j[chave]; else j[chave] = entrada;
+          gravar(j);
+        },
+        // Atômico no Electron; aqui é o mesmo processo (aba), então basta
+        // comparar-e-gravar sem corrida real.
+        compareAndSet: async (chave, esperado, entrada) => {
+          const j = ler();
+          const atual = Object.prototype.hasOwnProperty.call(j, chave) ? j[chave] : null;
+          if (atual !== (esperado === undefined ? null : esperado)) {
+            return { applied: false, current: atual };
+          }
+          if (entrada === null || entrada === undefined) delete j[chave]; else j[chave] = entrada;
+          gravar(j);
+          return { applied: true, current: entrada === undefined ? null : entrada };
+        }
+      };
+    })(),
+    readFileDataUrlForAttach: (caminho) => lerArquivoComoDataUrl(caminho),
+    // No navegador não existe caminho para um File do SO (webUtils.getPathForFile
+    // é do Electron). Devolver '' é o contrato honesto: o app usa os bytes.
+    getPathForFile: () => '',
+    localModelsEnabled: false,
+    gitRoot: async () => null,
+    logsRoot: async () => '',
+    agentPluginsRoot: async () => '',
+    desktopPluginsRoot: async () => '',
+    watchDirectory: async (dir) => ({ id: 'sem-vigia', path: String(dir || '') }),
+    saveTextFileAs: async (pedido) => {
+      const p = pedido || {};
+      const texto = String(p.content !== undefined ? p.content : (p.text || ''));
+      if (!texto) return { canceled: true, saved: false };
+      const r = await fetch('/__save-text', {
+        method: 'POST',
+        headers: cabecalhoLocal({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ text: texto })
+      });
+      const j = await r.json().catch(() => null);
+      if (!j || !j.ok) throw new Error('nao salvei o texto (' + r.status + ')');
+      return { saved: true, path: j.path };
+    },
+    // Erro da renderer vai para o log do injetor (é o canal que eu leio).
+    reportRendererError: (payload) => {
+      try {
+        const msg = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        navigator.sendBeacon('/__err', new Blob([JSON.stringify({ level: 'error', msg: msg })],
+          { type: 'application/json' }));
+      } catch (e) {}
+      return undefined;
     },
     readDir: async () => [],
     readFileText: async () => '',
@@ -762,6 +840,57 @@
   bridge.profile.getDefault = track('profile.getDefault', bridge.profile.getDefault);
   bridge.connections.list = track('connections.list', bridge.connections.list);
 
+  // ── auditoria da ponte (diagnóstico permanente) ──────────────────────────
+  // Compara folha por folha o objeto final com a base GERADA do contrato: o que
+  // continuou com a MESMA referência é stub (feature que existe na UI e não faz
+  // nada); o resto foi implementado aqui. Sem isso, "o botão não faz nada" vira
+  // adivinhação — e a lista muda a cada atualização do contrato.
+  try {
+    const achatar = (obj, prefixo) => Object.keys(obj || {}).reduce((acc, k) => {
+      const caminho = prefixo ? prefixo + '.' + k : k;
+      const v = obj[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype) {
+        Object.assign(acc, achatar(v, caminho));
+      } else {
+        acc[caminho] = v;
+      }
+      return acc;
+    }, {});
+    const base = achatar((window.__HERMES_STUBS__) || {}, '');
+    const final = achatar(bridge, '');
+    const stubs = Object.keys(base).filter((k) => final[k] === base[k]);
+    const implementados = Object.keys(base).filter((k) => k in final && final[k] !== base[k]);
+    const extras = Object.keys(final).filter((k) => !(k in base));
+    window.__HERMES_AUDIT__ = { stubs, implementados, extras };
+    log(`ponte: ${implementados.length} implementados, ${stubs.length} stubs, ${extras.length} extras`);
+  } catch (e) { /* auditoria nunca derruba o boot */ }
+
+  // ── superfícies que NÃO existem no navegador: AUSENTES, não stub ─────────
+  // O app decide "posso fazer X?" por PRESENÇA (`typeof bridge.X === 'function'`).
+  // Com o stub universal toda chave do contrato existe, então o app achava que
+  // estava dentro do Electron e mostrava "New window", "Open in terminal", HUD,
+  // pet, screenshot, updater… — botões que abrem e não fazem nada. Apagar a
+  // chave (e o Proxy devolver undefined) faz o app esconder/desabilitar a ação.
+  // NÃO entram aqui os listeners (on*): código que faz `const off = bridge.onX(cb)`
+  // sem `?.` estouraria com TypeError.
+  const AUSENTES = new Set([
+    'openWindow', 'openSessionWindow', 'openBrowserWindow', 'openSessionInTerminal',
+    'hud', 'petOverlay', 'quickEntry', 'windowRelay', 'windowControls',
+    'screenshot', 'minimizeToTray', 'nativeOverlayWidth',
+    'updates', 'updateHold', 'uninstall', 'relaunchApp', 'recycleBackend', 'resetBootstrap',
+    'cancelBootstrap', 'desktopMetrics', 'setDisableF12', 'setF12ShortcutActive',
+    'capturePreview', 'watchPreviewFile', 'stopPreviewFileWatch',
+    'sshConfigHosts', 'sshResolveHost', 'cloud', 'probeConnectionConfig',
+    'getConnectionConfig', 'saveConnectionConfig', 'applyConnectionConfig', 'testConnectionConfig',
+    'getSecretStorageEncryption', 'setSecretStorageEncryption',
+    'oauthLoginConnectionConfig', 'oauthLogoutConnectionConfig',
+    'installDesktopPlugin', 'removeDesktopPlugin', 'reconcileDesktopPlugins', 'probePluginRepo',
+    'readPluginSource', 'desktopPluginsRoot', 'agentPluginsRoot',
+    'claimAmbientCue', 'chatOnboarding', 'wakeIndicator', 'hudModifier',
+    'themes', 'preparedSubmissionsProxyFallback',
+  ]);
+  AUSENTES.forEach((chave) => { delete bridge[chave]; });
+
   const faltando = new Set()
   window.hermesDesktop = new Proxy(bridge, {
     // Rede de segurança: qualquer método da ponte que eu não tenha previsto devolve
@@ -769,8 +898,21 @@
     // E registra o nome: em build de produção o React não loga o erro capturado,
     // então a lista de chaves que o app PEDE e não existe é o único rastro do culpado.
     get(alvo, prop) {
-      if (prop in alvo) return alvo[prop]
+      if (prop in alvo) {
+        // Registra o uso de um stub do contrato: é assim que se descobre QUAL
+        // botão da tela depende de algo que aqui não faz nada (antes, silêncio).
+        try {
+          if (typeof prop === 'string' && window.__HERMES_AUDIT__ &&
+              window.__HERMES_AUDIT__.stubs.indexOf(prop) !== -1) {
+            console.info('[bridge-stub] ' + prop);
+          }
+        } catch (e) {}
+        return alvo[prop]
+      }
       if (typeof prop === 'symbol') return undefined
+      // Superfície que este host não tem: undefined de propósito (o app testa
+      // presença para decidir se mostra o botão).
+      if (AUSENTES.has(String(prop))) return undefined
       if (!faltando.has(prop) && String(prop).length < 40) {
         faltando.add(prop)
         try { console.info('[bridge-falta] ' + String(prop)) } catch (e) {}
